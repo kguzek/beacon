@@ -135,14 +135,26 @@ pub fn spawn_refreshes(
         let snapshots = snapshots.clone();
         tasks.push(tokio::spawn(async move {
             let mut failures = 0u32;
+            let mut health = RefreshHealth::default();
+            let snapshot = match kind {
+                0 => "current",
+                1 => "day",
+                _ => "month",
+            };
             loop {
-                let started = std::time::Instant::now();
                 let result = match kind {
                     0 => upstream.current(now()).await,
                     _ => upstream.history(now(), kind == 2).await,
                 };
+                let result = result.and_then(|body| {
+                    anyhow::ensure!(
+                        body.len() <= 32 * 1024 * 1024,
+                        "snapshot exceeds size limit"
+                    );
+                    Ok(body)
+                });
                 match result {
-                    Ok(body) if body.len() <= 32 * 1024 * 1024 => {
+                    Ok(body) => {
                         let mut cache = snapshots.write().unwrap();
                         let slot = match kind {
                             0 => &mut cache.current,
@@ -151,20 +163,11 @@ pub fn spawn_refreshes(
                         };
                         *slot = Some(Bytes::from(body));
                         failures = 0;
-                        tracing::info!(
-                            snapshot = kind,
-                            elapsed_ms = started.elapsed().as_millis() as u64,
-                            "snapshot refreshed"
-                        );
+                        health.succeeded(snapshot);
                     }
-                    _ => {
+                    Err(error) => {
                         failures = (failures + 1).min(6);
-                        // Never log raw upstream errors, labels, URLs, or credentials.
-                        tracing::warn!(
-                            snapshot = kind,
-                            failures,
-                            "snapshot refresh failed; retaining previous bytes"
-                        );
+                        health.failed(snapshot, &error, (seconds * 2u64.pow(failures)).min(86400));
                     }
                 }
                 tokio::time::sleep(Duration::from_secs(
@@ -175,4 +178,67 @@ pub fn spawn_refreshes(
         }));
     }
     Ok(tasks)
+}
+
+/// Logs transitions only: repeated successes and failures are intentionally silent.
+#[derive(Default)]
+struct RefreshHealth {
+    available: bool,
+    failing: bool,
+}
+
+impl RefreshHealth {
+    fn succeeded(&mut self, snapshot: &str) {
+        if self.failing {
+            tracing::info!(snapshot, "snapshot refresh recovered");
+        }
+        if !self.available {
+            tracing::info!(snapshot, "initial snapshot available");
+            if snapshot == "current" {
+                tracing::info!("publisher ready");
+            }
+        }
+        self.available = true;
+        self.failing = false;
+    }
+
+    fn failed(&mut self, snapshot: &str, error: &anyhow::Error, retry_seconds: u64) {
+        if !self.failing {
+            // Display only our sanitized top-level error, never its raw source chain.
+            tracing::warn!(
+                snapshot,
+                error = %error,
+                previous_snapshot_available = self.available,
+                retry_seconds,
+                "snapshot refresh failing; retries use backoff; further failures suppressed until recovery"
+            );
+        }
+        self.failing = true;
+    }
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use super::RefreshHealth;
+
+    #[test]
+    fn refresh_health_transitions() {
+        let mut health = RefreshHealth::default();
+        let error = anyhow::anyhow!("upstream request failed");
+        assert!(!health.available && !health.failing);
+
+        for _ in 0..2 {
+            health.failed("current", &error, 60);
+            assert!(!health.available && health.failing);
+        }
+        for _ in 0..2 {
+            health.succeeded("current");
+            assert!(health.available && !health.failing);
+        }
+
+        health.failed("current", &error, 60);
+        assert!(health.available && health.failing);
+        health.succeeded("current");
+        assert!(health.available && !health.failing);
+    }
 }

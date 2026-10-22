@@ -85,11 +85,27 @@ impl Prometheus {
             request = request.bearer_auth(token);
         }
         // Never propagate reqwest errors (which may contain private URLs) to public responses/logs.
-        let response = request
-            .send()
-            .await
-            .map_err(|_| anyhow::anyhow!("upstream request failed"))?;
-        ensure!(response.status().is_success(), "upstream HTTP failure");
+        let response = request.send().await.map_err(|error| {
+            // Classify without logging reqwest's message, which can contain private URLs.
+            anyhow::anyhow!(if error.is_timeout() {
+                "upstream request timed out"
+            } else if error.is_connect() {
+                "upstream connection failed"
+            } else {
+                "upstream request failed"
+            })
+        })?;
+        let status = response.status();
+        ensure!(
+            status.is_success(),
+            "upstream HTTP status {}{}",
+            status.as_u16(),
+            if status.is_redirection() {
+                "; redirects are disabled; configure the final Prometheus URL directly"
+            } else {
+                ""
+            }
+        );
         ensure!(
             response
                 .content_length()

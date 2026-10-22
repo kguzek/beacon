@@ -27,3 +27,9 @@ The page itself is entirely static, so it can live on a CDN or any static hostin
 To use Beacon, configure each publisher with its Prometheus address and shared service inventory, then add the public publisher URLs to `web/public/locations.json`. Build the page with `pnpm build` and deploy `web/dist/` to your static host.
 
 See the [API documentation](docs/API.md) for configuration options and response formats.
+
+## Publisher logs
+
+The publisher writes readable logs to stderr at `info` level by default (colorized in a terminal). Set `RUST_LOG` to override the filter, for example `RUST_LOG=beacon_publisher=debug`.
+
+Logs cover startup/configuration, HTTP listener availability, initial snapshots and readiness, refresh failure/recovery transitions, and graceful shutdown. Repeated successful refreshes and consecutive failures are silent. Each snapshot stream (`current`, `day`, `month`) reports its first failure with a safe diagnostic and initial retry delay; retries continue with backoff until recovery. A retained snapshot may expire during an outage even though the publisher's readiness remains latched. Upstream URLs, credentials, response bodies, and raw error chains are not logged.
