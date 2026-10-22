@@ -90,6 +90,84 @@ fn startup_only_and_required_files() {
 }
 
 #[test]
+fn layered_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("base.toml");
+    let local = dir.path().join("local.toml");
+    let last = dir.path().join("last.toml");
+    let services = dir.path().join("services.yaml");
+    std::fs::write(&services, yaml()).unwrap();
+    // The base is incomplete and contains values that only become valid after merging.
+    std::fs::write(
+        &base,
+        r#"
+[location]
+id = "primary"
+[prometheus]
+url = "not a URL"
+job = "blackbox_http"
+[services]
+path = "/nonexistent/services.yaml"
+[server]
+cache_seconds = 100
+allowed_origins = ["https://old.example.org"]
+[refresh]
+current_seconds = 42
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &local,
+        format!(
+            r#"
+[location]
+name = "Local"
+[prometheus]
+url = "http://localhost:9090"
+[services]
+path = {services:?}
+[server]
+cache_seconds = 20
+allowed_origins = ["https://new.example.org"]
+[refresh]
+day_seconds = 600
+"#,
+        ),
+    )
+    .unwrap();
+    std::fs::write(&last, "[server]\ncache_seconds = 5\nallowed_origins = []").unwrap();
+    assert!(Config::load(&base).is_err());
+    assert!(Config::load(&local).is_err());
+    let (merged, inventory) = Config::load_paths(&[&base, &local]).unwrap();
+    assert_eq!(merged.location.id, "primary");
+    assert_eq!(merged.location.name, "Local");
+    assert_eq!(merged.prometheus.job, "blackbox_http");
+    assert_eq!(merged.prometheus.timeout_seconds, 20);
+    assert_eq!(merged.server.listen, "0.0.0.0:8080");
+    assert_eq!(merged.server.allowed_origins, ["https://new.example.org"]);
+    assert_eq!(merged.refresh.current_seconds, 42);
+    assert_eq!(merged.refresh.day_seconds, 600);
+    assert_eq!(inventory.len(), 2);
+    let (merged, _) = Config::load_paths(&[&base, &local, &last]).unwrap();
+    assert_eq!(merged.server.cache_seconds, 5);
+    assert!(merged.server.allowed_origins.is_empty());
+    assert!(Config::load_paths(&[&local, &base]).is_err());
+
+    for invalid in [
+        "not valid TOML",
+        "unknown_field = true",
+        "[server]\ncache_seconds = 100",
+        "[server]\ncache_seconds = 'wrong type'",
+        "[services]\npath = '/nonexistent/inventory.yaml'",
+    ] {
+        std::fs::write(&last, invalid).unwrap();
+        assert!(Config::load_paths(&[&base, &local, &last]).is_err());
+    }
+    assert!(Config::load_paths(&[&base, &local, &dir.path().join("missing.toml")]).is_err());
+    assert!(Config::load_paths(&[] as &[&Path]).is_err());
+}
+
+#[test]
 fn upstream_validation_and_freshness() {
     let services = inventory(yaml()).unwrap();
     let series =

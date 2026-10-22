@@ -161,8 +161,23 @@ pub fn inventory(yaml: &str) -> Result<Vec<Service>> {
 }
 impl Config {
     pub fn load(path: &Path) -> Result<(Self, Vec<Service>)> {
-        let raw = std::fs::read_to_string(path).context("cannot read publisher TOML")?;
-        let config: Self = toml::from_str(&raw).context("invalid publisher TOML")?;
+        Self::load_paths(&[path])
+    }
+
+    pub fn load_paths(paths: &[impl AsRef<Path>]) -> Result<(Self, Vec<Service>)> {
+        ensure!(!paths.is_empty(), "at least one config path is required");
+        let mut merged = toml::Value::Table(Default::default());
+        for path in paths {
+            let path = path.as_ref();
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("cannot read publisher TOML: {}", path.display()))?;
+            let value = toml::from_str(&raw)
+                .with_context(|| format!("invalid publisher TOML: {}", path.display()))?;
+            merge(&mut merged, value);
+        }
+        let config: Self = merged
+            .try_into()
+            .context("invalid merged publisher config")?;
         config.validate()?;
         let yaml = std::fs::read_to_string(&config.services.path)
             .context("cannot read service inventory")?;
@@ -232,5 +247,21 @@ impl Config {
             );
         }
         Ok(())
+    }
+}
+
+fn merge(base: &mut toml::Value, overlay: toml::Value) {
+    match (base, overlay) {
+        (toml::Value::Table(base), toml::Value::Table(overlay)) => {
+            for (key, value) in overlay {
+                match base.get_mut(&key) {
+                    Some(existing) => merge(existing, value),
+                    None => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (base, overlay) => *base = overlay,
     }
 }

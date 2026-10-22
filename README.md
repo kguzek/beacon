@@ -28,6 +28,16 @@ To use Beacon, configure each publisher with its Prometheus address and shared s
 
 See the [API documentation](docs/API.md) for configuration options and response formats.
 
+## Publisher configuration
+
+The publisher reads `/etc/beacon/config.toml` by default. Repeat `--config.path` to layer local overrides over a base configuration:
+
+```sh
+beacon-publisher --config.path config.toml --config.path config.local.toml
+```
+
+Files are merged in order: nested tables are merged, while later values (including entire arrays) replace earlier ones. Override files can contain only the fields they change. Defaults and validation apply to the final merged configuration, and the service inventory is loaded from its resulting `services.path`. Explicit paths replace the default path; every specified file must exist and contain valid TOML.
+
 ## Publisher logs
 
 The publisher writes readable logs to stderr at `info` level by default (colorized in a terminal). Set `RUST_LOG` to override the filter, for example `RUST_LOG=beacon_publisher=debug`.

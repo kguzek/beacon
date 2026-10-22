@@ -15,12 +15,8 @@ async fn main() -> Result<()> {
         "starting Beacon publisher"
     );
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let path = match args.as_slice() {
-        [] => "/etc/beacon/config.toml",
-        [option, path] if option == "--config.path" => path,
-        _ => bail!("usage: beacon-publisher [--config.path /path/config.toml]"),
-    };
-    let (config, services) = Config::load(Path::new(path))?;
+    let paths = config_paths(&args)?;
+    let (config, services) = Config::load_paths(&paths)?;
     tracing::info!(
         location = %config.location.id,
         services = services.len(),
@@ -67,4 +63,46 @@ async fn main() -> Result<()> {
     }
     tracing::info!("Beacon publisher stopped");
     Ok(())
+}
+
+fn config_paths(args: &[String]) -> Result<Vec<&Path>> {
+    if args.is_empty() {
+        return Ok(vec![Path::new("/etc/beacon/config.toml")]);
+    }
+    let mut paths = Vec::new();
+    for pair in args.chunks(2) {
+        match pair {
+            [option, path] if option == "--config.path" && !path.starts_with("--") => {
+                paths.push(Path::new(path));
+            }
+            _ => bail!("usage: beacon-publisher [--config.path /path/config.toml]..."),
+        }
+    }
+    Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_arguments() {
+        assert_eq!(
+            config_paths(&[]).unwrap(),
+            vec![Path::new("/etc/beacon/config.toml")]
+        );
+        let args = ["--config.path", "base.toml", "--config.path", "local.toml"].map(String::from);
+        assert_eq!(
+            config_paths(&args).unwrap(),
+            vec![Path::new("base.toml"), Path::new("local.toml")]
+        );
+        for args in [
+            vec!["--config.path"],
+            vec!["--unknown", "config.toml"],
+            vec!["--config.path", "--config.path"],
+            vec!["--config.path", "base.toml", "local.toml"],
+        ] {
+            assert!(config_paths(&args.into_iter().map(String::from).collect::<Vec<_>>()).is_err());
+        }
+    }
 }
