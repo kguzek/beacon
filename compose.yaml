@@ -1,0 +1,29 @@
+services:
+  publisher:
+    image: localhost/beacon-publisher:latest
+    build:
+      context: .
+      dockerfile: publisher/Containerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 256m
+    restart: unless-stopped
+    environment:
+      RUST_LOG: info
+    volumes:
+      - type: bind
+        source: "${BEACON_CONFIG_PATH:-${PWD}/config.toml}"
+        target: /etc/beacon/config.toml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${BEACON_SERVICES_PATH:-${PWD}/services.yaml}"
+        target: /etc/beacon/services.yaml
+        read_only: true
+        bind:
+          create_host_path: false

@@ -1,0 +1,181 @@
+import * as z from "zod";
+
+const timeSchema = z.number().nonnegative();
+const ratioSchema = z.number().min(0).max(1);
+const serviceSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  hidden: z.boolean(),
+  hosting_location: z.string().nullable(),
+});
+const locationSchema = z.object({ id: z.string(), name: z.string() });
+const envelope = {
+  schema_version: z.literal(1),
+  location: locationSchema,
+  generated_at: timeSchema,
+  expires_at: timeSchema,
+};
+export const currentSchema = z
+  .object({
+    ...envelope,
+    services: z
+      .array(
+        serviceSchema.extend({
+          status: z.enum(["healthy", "down", "unknown"]),
+          observed_at: timeSchema.nullable(),
+          expires_at: timeSchema.nullable(),
+          duration_seconds: timeSchema.nullable(),
+        }),
+      )
+      .max(500),
+  })
+  .superRefine((snapshot, context) => {
+    if (
+      new Set(snapshot.services.map((s) => s.id)).size !==
+      snapshot.services.length
+    ) {
+      context.addIssue({ code: "custom", message: "Duplicate service IDs" });
+    }
+  });
+export const historySchema = z.object({
+  ...envelope,
+  window_seconds: z.number().positive(),
+  bucket_seconds: z.number().positive(),
+  services: z
+    .array(
+      serviceSchema.extend({
+        observed_success_ratio: ratioSchema.nullable(),
+        coverage: ratioSchema,
+        buckets: z
+          .array(
+            z.object({
+              ends_at: timeSchema,
+              observed_success_ratio: ratioSchema.nullable(),
+              coverage: ratioSchema,
+              samples: z.int().nonnegative(),
+            }),
+          )
+          .max(1000),
+      }),
+    )
+    .max(500),
+});
+export const settingsSchema = z
+  .object({
+    title: z.string().default("Service status"),
+    locations: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          name: z.string().min(1),
+          url: z
+            .url()
+            .refine(
+              (value) => ["http:", "https:"].includes(new URL(value).protocol),
+              "Only HTTP API URLs are supported",
+            ),
+        }),
+      )
+      .min(1)
+      .max(20),
+  })
+  .refine(
+    (s) => new Set(s.locations.map((l) => l.id)).size === s.locations.length,
+    "Duplicate observer IDs",
+  );
+export type Current = z.infer<typeof currentSchema>;
+export type Observation = Current["services"][number];
+export type History = z.infer<typeof historySchema>;
+export type LocationConfig = z.infer<
+  typeof settingsSchema
+>["locations"][number];
+export interface Observer {
+  config: LocationConfig;
+  reachable: boolean;
+  loading: boolean;
+  current: Current | null;
+  day: History | null;
+  month: History | null;
+}
+export function effectiveStatus(
+  service: Observation | undefined,
+  snapshot: Current | null,
+  now: number,
+): Observation["status"] {
+  if (
+    service === undefined ||
+    snapshot === null ||
+    snapshot.generated_at > now + 5 ||
+    now >= snapshot.expires_at ||
+    service.observed_at === null ||
+    service.observed_at > now + 5 ||
+    service.expires_at === null ||
+    now >= service.expires_at
+  ) {
+    return "unknown";
+  }
+  return service.status;
+}
+// Union includes in-memory last results, but there is deliberately no durable storage.
+export function visibleInventory(observers: Observer[]): Observation[] {
+  const inventory = new Map<string, Observation>();
+  const hidden = new Set<string>();
+  for (const observer of observers) {
+    const services = observer.current?.services ?? [];
+    for (const item of services) {
+      if (item.hidden) {
+        hidden.add(item.id);
+      }
+      inventory.set(item.id, item);
+    }
+  }
+  // Conservative visibility across skew: hidden at any observer means hidden on this page.
+  return [...inventory.values()]
+    .filter((item) => !hidden.has(item.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+export async function fetchJson<T>(
+  url: string,
+  schema: z.ZodType<T>,
+): Promise<T> {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(8000),
+    cache: "no-cache",
+    credentials: "omit",
+    referrerPolicy: "no-referrer",
+  });
+  if (!response.ok) {
+    throw new Error("Publisher unavailable");
+  }
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    throw new Error("Empty response");
+  }
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      size += value.byteLength;
+      if (size > 32 * 1024 * 1024) {
+        throw new Error("Response too large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return schema.parse(JSON.parse(new TextDecoder().decode(bytes)));
+}
+export function endpoint(base: string, path: string): string {
+  return `${base.replace(/\/$/, "")}${path}`;
+}

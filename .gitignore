@@ -1,0 +1,13 @@
+/config.toml
+/config.*.toml
+/services.yaml
+/blackbox-http.yaml
+.env
+.env.*
+!*.example
+node_modules/
+target/
+dist/
+playwright-report/
+test-results/
+web/public/locations.local.json

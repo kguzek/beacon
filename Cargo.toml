@@ -1,0 +1,7 @@
+[workspace]
+members = ["publisher"]
+resolver = "3"
+
+[profile.release]
+lto = "thin"
+strip = true

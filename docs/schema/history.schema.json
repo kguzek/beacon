@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    "generated_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "expires_at": {
+      "type": "number",
+      "minimum": 0
+    },
+    "window_seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "bucket_seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "services": {
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "hosting_location": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observed_success_ratio": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "buckets": {
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ends_at": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "observed_success_ratio": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "coverage": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "samples": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "ends_at",
+                "observed_success_ratio",
+                "coverage",
+                "samples"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "hidden",
+          "hosting_location",
+          "observed_success_ratio",
+          "coverage",
+          "buckets"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "location",
+    "generated_at",
+    "expires_at",
+    "window_seconds",
+    "bucket_seconds",
+    "services"
+  ]
+}

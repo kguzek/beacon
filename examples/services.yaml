@@ -1,0 +1,11 @@
+- targets: ["https://example.org/health?private=not-published"]
+  labels:
+    service: "Example website"
+    beacon_hosting_location: "primary"
+- targets: ["https://hidden.example.org"]
+  labels:
+    service: "Public API only"
+    beacon_hidden: "true"
+- targets: ["https://private.example.org"]
+  labels:
+    beacon_publish: "false"

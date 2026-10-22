@@ -1,0 +1,21 @@
+{
+  "name": "beacon",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter @beacon/web build",
+    "dev": "pnpm --filter @beacon/web dev",
+    "format": "prettier --write web/ package.json pnpm-workspace.yaml",
+    "lint": "pnpm --filter @beacon/web lint",
+    "schema": "node web/scripts/export-schema.mjs",
+    "test": "pnpm --filter @beacon/web test",
+    "test:e2e": "pnpm --filter @beacon/web test:e2e"
+  },
+  "prettier": "@solvro/config/prettier",
+  "devDependencies": {
+    "@solvro/config": "4.0.0",
+    "eslint": "^10.13.0",
+    "prettier": "^3.6.2"
+  },
+  "packageManager": "pnpm@12.14.0"
+}

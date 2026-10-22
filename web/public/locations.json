@@ -1,0 +1,10 @@
+{
+  "title": "Service status",
+  "locations": [
+    {
+      "id": "primary",
+      "name": "Primary server",
+      "url": "http://localhost:8080"
+    }
+  ]
+}

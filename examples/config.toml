@@ -1,0 +1,27 @@
+[location]
+id = "primary"
+name = "Primary server"
+
+[prometheus]
+url = "http://prometheus:9090"
+job = "blackbox_http"
+# bearer_token = "private-token"
+timeout_seconds = 20
+max_response_bytes = 16777216
+
+[services]
+path = "/etc/beacon/services.yaml"
+
+[server]
+listen = "0.0.0.0:8080"
+allowed_origins = ["http://localhost:5173", "http://localhost:8081"]
+cache_seconds = 15
+
+[refresh]
+current_seconds = 30
+day_seconds = 300
+month_seconds = 1800
+stale_seconds = 120
+scrape_seconds = 30
+day_bucket_seconds = 900
+month_bucket_seconds = 21600
