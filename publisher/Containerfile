@@ -1,13 +1,15 @@
-FROM quay.io/fedora/fedora:44 AS build
-RUN dnf -y install rust cargo gcc openssl-devel && dnf clean all
+FROM docker.io/library/rust:1.96-alpine AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY publisher ./publisher
-RUN cargo build --locked --release -p beacon-publisher
+RUN --mount=type=cache,id=beacon-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=beacon-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=beacon-publisher-target,target=/src/target,sharing=locked \
+    cargo build --locked --release -p beacon-publisher && \
+    cp target/release/beacon-publisher /beacon-publisher
 
-FROM quay.io/fedora/fedora-minimal:44
-RUN microdnf -y install ca-certificates && microdnf clean all
-COPY --from=build /src/target/release/beacon-publisher /usr/local/bin/beacon-publisher
+FROM scratch
+COPY --from=build /beacon-publisher /usr/local/bin/beacon-publisher
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/beacon-publisher"]
