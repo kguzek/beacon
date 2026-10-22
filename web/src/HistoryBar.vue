@@ -1,15 +1,58 @@
 <script setup lang="ts">
-import { ref, useId } from "vue";
+import { computed, onUnmounted, ref, shallowRef, useId, watch } from "vue";
 import type { History } from "./api";
 
 type Bucket = History["services"][number]["buckets"][number];
-defineProps<{
+const props = defineProps<{
   buckets: Bucket[] | undefined;
   bucketSeconds: number;
   label: string;
 }>();
+// Yield before replacing a large history so the selector can paint immediately.
+// Keep immutable API snapshots out of Vue's deep reactivity.
+const displayed = shallowRef(props.buckets);
+const displayedBucketSeconds = ref(props.bucketSeconds);
+const updating = ref(false);
+let updateTimer: ReturnType<typeof setTimeout> | undefined;
+let updateFrame = 0;
+watch(
+  () => [props.buckets, props.bucketSeconds] as const,
+  () => {
+    clearTimeout(updateTimer);
+    cancelAnimationFrame(updateFrame);
+    tooltip.value = null;
+    updating.value = true;
+    updateFrame = requestAnimationFrame(() => {
+      updateTimer = setTimeout(() => {
+        displayed.value = props.buckets;
+        displayedBucketSeconds.value = props.bucketSeconds;
+        updating.value = false;
+      }, 0);
+    });
+  },
+);
+onUnmounted(() => {
+  clearTimeout(updateTimer);
+  cancelAnimationFrame(updateFrame);
+});
 const tooltip = ref<{ bucket: Bucket; left: number; top: number } | null>(null);
 const tooltipId = useId();
+const formatter = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
+  timeZoneName: "short",
+});
+const segments = computed(() =>
+  (displayed.value ?? []).map((bucket) => ({
+    bucket,
+    state: state(bucket),
+    label: `${date(bucket.ends_at)}: ${state(bucket)}, last HTTP status code ${bucket.last_http_status_code ?? "unavailable"}`,
+  })),
+);
 function state(bucket: Bucket) {
   if (bucket.coverage < 0.8 || bucket.observed_success_ratio == null)
     return "unknown";
@@ -27,9 +70,7 @@ function show(event: Event, bucket: Bucket) {
   };
 }
 function date(time: number) {
-  return new Date(time * 1000).toLocaleString(undefined, {
-    timeZoneName: "short",
-  });
+  return formatter.format(time * 1000);
 }
 function percent(value: number | null) {
   return value == null ? "—" : `${(value * 100).toFixed(2)}%`;
@@ -37,20 +78,27 @@ function percent(value: number | null) {
 </script>
 
 <template>
-  <div class="history" :aria-label="label" @mouseleave="tooltip = null">
+  <div
+    class="history"
+    :aria-label="label"
+    :aria-busy="updating"
+    @mouseleave="tooltip = null"
+  >
     <button
-      v-for="bucket in buckets ?? []"
-      :key="bucket.ends_at"
+      v-for="segment in segments"
+      :key="segment.bucket.ends_at"
       class="history-segment"
-      :class="state(bucket)"
-      :aria-label="`${date(bucket.ends_at)}: ${state(bucket)}, last HTTP status code ${bucket.last_http_status_code ?? 'unavailable'}`"
-      :aria-describedby="tooltip?.bucket === bucket ? tooltipId : undefined"
-      @mouseenter="show($event, bucket)"
-      @focus="show($event, bucket)"
+      :class="segment.state"
+      :aria-label="segment.label"
+      :aria-describedby="
+        tooltip?.bucket === segment.bucket ? tooltipId : undefined
+      "
+      @mouseenter="show($event, segment.bucket)"
+      @focus="show($event, segment.bucket)"
       @blur="tooltip = null"
       @keydown.esc="tooltip = null"
     ></button>
-    <span v-if="!buckets" class="no-history">History unavailable</span>
+    <span v-if="!displayed" class="no-history">History unavailable</span>
   </div>
   <Teleport to="body">
     <div
@@ -62,7 +110,7 @@ function percent(value: number | null) {
     >
       <strong>{{ label }}</strong>
       <div class="tooltip-date">
-        {{ date(tooltip.bucket.ends_at - bucketSeconds) }}<br />–
+        {{ date(tooltip.bucket.ends_at - displayedBucketSeconds) }}<br />–
         {{ date(tooltip.bucket.ends_at) }}
       </div>
       <dl>

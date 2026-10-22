@@ -65,10 +65,12 @@ impl Default for Server {
 #[serde(default, deny_unknown_fields)]
 pub struct Refresh {
     pub current_seconds: u64,
+    pub hour_seconds: u64,
     pub day_seconds: u64,
     pub month_seconds: u64,
     pub stale_seconds: u64,
     pub scrape_seconds: u64,
+    pub hour_bucket_seconds: u64,
     pub day_bucket_seconds: u64,
     pub month_bucket_seconds: u64,
 }
@@ -76,10 +78,12 @@ impl Default for Refresh {
     fn default() -> Self {
         Self {
             current_seconds: 30,
+            hour_seconds: 30,
             day_seconds: 300,
             month_seconds: 1800,
             stale_seconds: 120,
             scrape_seconds: 30,
+            hour_bucket_seconds: 30,
             day_bucket_seconds: 900,
             month_bucket_seconds: 21600,
         }
@@ -225,9 +229,14 @@ impl Config {
         }
         let r = &self.refresh;
         ensure!(
-            [r.current_seconds, r.day_seconds, r.month_seconds]
-                .iter()
-                .all(|s| (1..=86400).contains(s)),
+            [
+                r.current_seconds,
+                r.hour_seconds,
+                r.day_seconds,
+                r.month_seconds
+            ]
+            .iter()
+            .all(|s| (1..=86400).contains(s)),
             "invalid refresh interval"
         );
         ensure!(
@@ -235,6 +244,7 @@ impl Config {
             "invalid freshness/scrape interval"
         );
         for (window, bucket) in [
+            (3600, r.hour_bucket_seconds),
             (86400, r.day_bucket_seconds),
             (2592000, r.month_bucket_seconds),
         ] {

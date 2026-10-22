@@ -24,6 +24,7 @@ use tower_http::{
 #[derive(Default)]
 pub struct Snapshots {
     pub current: Option<Bytes>,
+    pub hour: Option<Bytes>,
     pub day: Option<Bytes>,
     pub month: Option<Bytes>,
 }
@@ -94,9 +95,10 @@ async fn serve(State(state): State<StateData>, request: Request) -> Response {
             StatusCode::SERVICE_UNAVAILABLE,
             r#"{"error":"initial_snapshot_unavailable"}"#,
         ),
-        "/v1/current" | "/v1/history/day" | "/v1/history/month" => {
+        "/v1/current" | "/v1/history/hour" | "/v1/history/day" | "/v1/history/month" => {
             let bytes = match path.as_str() {
                 "/v1/current" => &snapshots.current,
+                "/v1/history/hour" => &snapshots.hour,
                 "/v1/history/day" => &snapshots.day,
                 _ => &snapshots.month,
             };
@@ -130,6 +132,7 @@ pub fn spawn_refreshes(
         (0, config.refresh.current_seconds),
         (1, config.refresh.day_seconds),
         (2, config.refresh.month_seconds),
+        (3, config.refresh.hour_seconds),
     ] {
         let upstream = upstream.clone();
         let snapshots = snapshots.clone();
@@ -139,12 +142,13 @@ pub fn spawn_refreshes(
             let snapshot = match kind {
                 0 => "current",
                 1 => "day",
-                _ => "month",
+                2 => "month",
+                _ => "hour",
             };
             loop {
                 let result = match kind {
                     0 => upstream.current(now()).await,
-                    _ => upstream.history(now(), kind == 2).await,
+                    _ => upstream.history(now(), snapshot).await,
                 };
                 let result = result.and_then(|body| {
                     anyhow::ensure!(
@@ -159,7 +163,8 @@ pub fn spawn_refreshes(
                         let slot = match kind {
                             0 => &mut cache.current,
                             1 => &mut cache.day,
-                            _ => &mut cache.month,
+                            2 => &mut cache.month,
+                            _ => &mut cache.hour,
                         };
                         *slot = Some(Bytes::from(body));
                         failures = 0;

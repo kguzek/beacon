@@ -39,6 +39,7 @@ function observer(id: string, current: Current | null): Observer {
     current,
     reachable: current !== null,
     loading: false,
+    hour: null,
     day: null,
     month: null,
   };

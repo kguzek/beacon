@@ -227,7 +227,7 @@ async fn upstream(
         let start: f64 = params["start"].parse().unwrap();
         let step: f64 = params["step"].parse().unwrap();
         let value = if query.starts_with("count_") {
-            (step / 30.0 / 2.0).to_string()
+            (step / 30.0 / 2.0).ceil().to_string()
         } else if query.starts_with("last_over_time(probe_http_status_code") {
             match mode {
                 1 => "0",
@@ -321,10 +321,17 @@ async fn current_missing_failed_stale_and_sanitized() {
 async fn history_coverage_and_fixed_buckets() {
     let (config, mock, task) = mock().await;
     let upstream = Prometheus::new(config, inventory(yaml()).unwrap()).unwrap();
-    for (month, buckets) in [(false, 96), (true, 120)] {
+    for (period, buckets) in [("hour", 120), ("day", 96), ("month", 120)] {
         let value: Value =
-            serde_json::from_slice(&upstream.history(3000000.0, month).await.unwrap()).unwrap();
-        assert_eq!(value["services"][0]["coverage"], 0.5);
+            serde_json::from_slice(&upstream.history(3000000.0, period).await.unwrap()).unwrap();
+        assert_eq!(
+            value["services"][0]["coverage"],
+            if period == "hour" { 1.0 } else { 0.5 }
+        );
+        if period == "hour" {
+            assert_eq!(value["window_seconds"], 3600);
+            assert_eq!(value["bucket_seconds"], 30);
+        }
         assert_eq!(value["services"][0]["observed_success_ratio"], 0.5);
         assert_eq!(
             value["services"][0]["buckets"].as_array().unwrap().len(),
@@ -341,7 +348,7 @@ async fn history_coverage_and_fixed_buckets() {
     for mode in [1, 2, 3] {
         mock.mode.store(mode, Ordering::SeqCst);
         let value: Value =
-            serde_json::from_slice(&upstream.history(3000000.0, false).await.unwrap()).unwrap();
+            serde_json::from_slice(&upstream.history(3000000.0, "day").await.unwrap()).unwrap();
         assert!(value["services"][0]["buckets"][0]["last_http_status_code"].is_null());
     }
     task.abort();
@@ -359,6 +366,7 @@ async fn cached_http_and_failure_retention() {
         ("/healthz", "GET", 200),
         ("/readyz", "GET", 503),
         ("/v1/current", "GET", 503),
+        ("/v1/history/hour", "GET", 503),
         ("/v1/current?query=secret", "GET", 400),
         ("/healthz?", "GET", 400),
         ("/v1/current", "POST", 405),
@@ -440,7 +448,7 @@ async fn history_failure_does_not_block_current_and_upstream_limits_apply() {
     let (mut config, mock, task) = mock().await;
     mock.fail_history.store(true, Ordering::SeqCst);
     let upstream = Prometheus::new(config.clone(), inventory(yaml()).unwrap()).unwrap();
-    assert!(upstream.history(100000.0, false).await.is_err());
+    assert!(upstream.history(100000.0, "day").await.is_err());
     assert!(upstream.current(100000.0).await.is_ok());
     config.prometheus.max_response_bytes = 32;
     let limited = Prometheus::new(config.clone(), inventory(yaml()).unwrap()).unwrap();

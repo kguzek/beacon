@@ -12,6 +12,7 @@ Only GET without any query string or body is supported. Other methods return 405
 | --- | --- | --- |
 | `/v1/current` | 503 `snapshot_unavailable` before first valid refresh | 30s |
 | `/v1/history/day` | Same, independently initialized | 300s |
+| `/v1/history/hour` | Same, independently initialized; 1 hour in 30s buckets | 30s |
 | `/v1/history/month` | Same, independently initialized | 1800s |
 | `/healthz` | 200 while HTTP process is alive | No upstream check |
 | `/readyz` | 503 until first current snapshot, then 200 until restart | Latched |
@@ -49,7 +50,7 @@ Successful responses have `Cache-Control: public, max-age=N, must-revalidate` (d
 
 ## History
 
-Both routes share the current envelope and inventory metadata. Instead of current status fields they contain:
+All three history routes share the current envelope and inventory metadata. Instead of current status fields they contain:
 
 ```json
 {
@@ -65,7 +66,7 @@ Both routes share the current envelope and inventory metadata. Instead of curren
 }
 ```
 
-The real response has all buckets, including empty ones. Day = rolling 24h / 15-minute buckets (96); month = rolling 30d / 6-hour buckets (120). Widths are configurable at startup, windows and routes are fixed. Only completed buckets are queried, aligned to UTC epoch multiples. Prometheus `avg_over_time(probe_success[width])` and `count_over_time(...)` run through `query_range` once each, for all targets in the configured job. Range windows are left-open/right-closed per Prometheus semantics.
+The real response has all buckets, including empty ones. Hour = rolling 1h / 30-second buckets (120); day = rolling 24h / 15-minute buckets (96); month = rolling 30d / 6-hour buckets (120). Widths are configurable at startup, windows and routes are fixed. Set `hour_bucket_seconds` to the actual `scrape_seconds` for one check per bucket (30s by default). Only completed buckets are queried, aligned to UTC epoch multiples. Prometheus `avg_over_time(probe_success[width])` and `count_over_time(...)` run through `query_range` once each, for all targets in the configured job. Range windows are left-open/right-closed per Prometheus semantics.
 
 `observed_success_ratio` is the sample-weighted fraction of observed successes, null with no samples. It is NOT wall-clock uptime. `coverage = min(samples / (bucket_width / configured_scrape_interval), 1)`; summary coverage uses the whole window. Coverage is an estimate: interval jitter, scrape configuration changes and gaps affect it; count alone does not prove continuous monitoring. Missing/failed scrapes produce no probe samples and reduce coverage, never fabricated successes. Gray frontend buckets have coverage <80% or no ratio. Other buckets are green only at 100% observed success, otherwise red. Exact numeric values are in bucket tooltips and summaries. History expiry = generation + 3 × its refresh interval, independent of current. Expired history is not rendered as fresh history.
 

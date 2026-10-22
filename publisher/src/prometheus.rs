@@ -180,12 +180,13 @@ impl Prometheus {
             services,
         })?)
     }
-    pub async fn history(&self, now: f64, month: bool) -> Result<Vec<u8>> {
+    pub async fn history(&self, now: f64, period: &str) -> Result<Vec<u8>> {
         let r = &self.config.refresh;
-        let (window, bucket, interval) = if month {
-            (2592000, r.month_bucket_seconds, r.month_seconds)
-        } else {
-            (86400, r.day_bucket_seconds, r.day_seconds)
+        let (window, bucket, interval) = match period {
+            "hour" => (3600, r.hour_bucket_seconds, r.hour_seconds),
+            "day" => (86400, r.day_bucket_seconds, r.day_seconds),
+            "month" => (2592000, r.month_bucket_seconds, r.month_seconds),
+            _ => anyhow::bail!("invalid history period"),
         };
         let end = (now / bucket as f64).floor() * bucket as f64;
         let selector = self.selector("probe_success");

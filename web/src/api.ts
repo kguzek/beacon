@@ -100,6 +100,7 @@ export interface Observer {
   reachable: boolean;
   loading: boolean;
   current: Current | null;
+  hour: History | null;
   day: History | null;
   month: History | null;
 }

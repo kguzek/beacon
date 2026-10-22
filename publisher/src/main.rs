@@ -22,6 +22,7 @@ async fn main() -> Result<()> {
         services = services.len(),
         allowed_origins = config.server.allowed_origins.len(),
         current_interval_seconds = config.refresh.current_seconds,
+        hour_interval_seconds = config.refresh.hour_seconds,
         day_interval_seconds = config.refresh.day_seconds,
         month_interval_seconds = config.refresh.month_seconds,
         "configuration loaded"

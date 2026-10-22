@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, markRaw, onMounted, onUnmounted, ref } from "vue";
 import {
   currentSchema,
   effectiveStatus,
@@ -16,7 +16,12 @@ const title = ref("Service status");
 const observers = ref<Observer[]>([]);
 const configError = ref(false);
 const now = ref(Date.now() / 1000);
-const period = ref<"day" | "month">("day");
+const period = ref<"hour" | "day" | "month">("hour");
+const periods = [
+  { id: "hour", label: "1 hour" },
+  { id: "day", label: "24 hours" },
+  { id: "month", label: "30 days" },
+] as const;
 const inventory = computed(() => visibleInventory(observers.value));
 const catastrophic = computed(
   () =>
@@ -36,7 +41,10 @@ function schedule(callback: () => void, delay: number) {
   }, delay);
   timers.add(timer);
 }
-async function refresh(observer: Observer, kind: "current" | "day" | "month") {
+async function refresh(
+  observer: Observer,
+  kind: "current" | "hour" | "day" | "month",
+) {
   try {
     if (kind === "current") {
       const value = await fetchJson(
@@ -45,7 +53,7 @@ async function refresh(observer: Observer, kind: "current" | "day" | "month") {
       );
       if (value.location.id !== observer.config.id)
         throw new Error("Observer identity mismatch");
-      observer.current = value;
+      observer.current = markRaw(value);
       observer.reachable = true;
     } else {
       const value = await fetchJson(
@@ -54,7 +62,7 @@ async function refresh(observer: Observer, kind: "current" | "day" | "month") {
       );
       if (value.location.id !== observer.config.id)
         throw new Error("Observer identity mismatch");
-      observer[kind] = value;
+      observer[kind] = markRaw(value);
     }
   } catch {
     if (kind === "current") observer.reachable = false;
@@ -65,7 +73,11 @@ async function refresh(observer: Observer, kind: "current" | "day" | "month") {
       () => {
         void refresh(observer, kind);
       },
-      kind === "current" ? 30000 : kind === "day" ? 300000 : 1800000,
+      kind === "current" || kind === "hour"
+        ? 30000
+        : kind === "day"
+          ? 300000
+          : 1800000,
     );
   }
 }
@@ -112,11 +124,12 @@ onMounted(async () => {
       reachable: false,
       loading: true,
       current: null,
+      hour: null,
       day: null,
       month: null,
     }));
     for (const observer of observers.value)
-      for (const kind of ["current", "day", "month"] as const)
+      for (const kind of ["current", "hour", "day", "month"] as const)
         void refresh(observer, kind);
   } catch {
     configError.value = true;
@@ -197,15 +210,13 @@ onUnmounted(() => {
         </div>
         <div class="segmented" aria-label="History window">
           <button
-            :class="{ selected: period === 'day' }"
-            @click="period = 'day'"
+            v-for="option in periods"
+            :key="option.id"
+            :class="{ selected: period === option.id }"
+            :aria-pressed="period === option.id"
+            @click="period = option.id"
           >
-            24 hours</button
-          ><button
-            :class="{ selected: period === 'month' }"
-            @click="period = 'month'"
-          >
-            30 days
+            {{ option.label }}
           </button>
         </div>
       </div>
