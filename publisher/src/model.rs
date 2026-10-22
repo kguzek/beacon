@@ -31,6 +31,7 @@ pub struct Bucket {
     pub observed_success_ratio: Option<f64>,
     pub coverage: f64,
     pub samples: u64,
+    pub last_http_status_code: Option<u16>,
 }
 #[derive(Serialize)]
 pub struct HistoryService {

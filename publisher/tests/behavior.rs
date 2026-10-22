@@ -150,6 +150,14 @@ async fn upstream(
         let step: f64 = params["step"].parse().unwrap();
         let value = if query.starts_with("count_") {
             (step / 30.0 / 2.0).to_string()
+        } else if query.starts_with("last_over_time(probe_http_status_code") {
+            match mode {
+                1 => "0",
+                2 => "600",
+                3 => "200.5",
+                _ => "503",
+            }
+            .to_owned()
         } else {
             "0.5".to_owned()
         };
@@ -233,7 +241,7 @@ async fn current_missing_failed_stale_and_sanitized() {
 }
 #[tokio::test]
 async fn history_coverage_and_fixed_buckets() {
-    let (config, _, task) = mock().await;
+    let (config, mock, task) = mock().await;
     let upstream = Prometheus::new(config, inventory(yaml()).unwrap()).unwrap();
     for (month, buckets) in [(false, 96), (true, 120)] {
         let value: Value =
@@ -246,6 +254,17 @@ async fn history_coverage_and_fixed_buckets() {
         );
         assert_eq!(value["services"][1]["coverage"], 0.0);
         assert!(value["services"][1]["observed_success_ratio"].is_null());
+        assert_eq!(
+            value["services"][0]["buckets"][0]["last_http_status_code"],
+            503
+        );
+        assert!(value["services"][1]["buckets"][0]["last_http_status_code"].is_null());
+    }
+    for mode in [1, 2, 3] {
+        mock.mode.store(mode, Ordering::SeqCst);
+        let value: Value =
+            serde_json::from_slice(&upstream.history(3000000.0, false).await.unwrap()).unwrap();
+        assert!(value["services"][0]["buckets"][0]["last_http_status_code"].is_null());
     }
     task.abort();
 }

@@ -53,6 +53,12 @@ export const historySchema = z.object({
               observed_success_ratio: ratioSchema.nullable(),
               coverage: ratioSchema,
               samples: z.int().nonnegative(),
+              last_http_status_code: z
+                .int()
+                .min(100)
+                .max(599)
+                .nullable()
+                .optional(),
             }),
           )
           .max(1000),

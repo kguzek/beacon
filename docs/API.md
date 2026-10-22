@@ -60,7 +60,7 @@ Both routes share the current envelope and inventory metadata. Instead of curren
     "hosting_location": null,
     "observed_success_ratio": 0.95,
     "coverage": 0.5,
-    "buckets": [{"ends_at":1700000100,"observed_success_ratio":0.95,"coverage":0.5,"samples":15}]
+    "buckets": [{"ends_at":1700000100,"observed_success_ratio":0.95,"coverage":0.5,"samples":15,"last_http_status_code":200}]
   }]
 }
 ```
@@ -68,6 +68,8 @@ Both routes share the current envelope and inventory metadata. Instead of curren
 The real response has all buckets, including empty ones. Day = rolling 24h / 15-minute buckets (96); month = rolling 30d / 6-hour buckets (120). Widths are configurable at startup, windows and routes are fixed. Only completed buckets are queried, aligned to UTC epoch multiples. Prometheus `avg_over_time(probe_success[width])` and `count_over_time(...)` run through `query_range` once each, for all targets in the configured job. Range windows are left-open/right-closed per Prometheus semantics.
 
 `observed_success_ratio` is the sample-weighted fraction of observed successes, null with no samples. It is NOT wall-clock uptime. `coverage = min(samples / (bucket_width / configured_scrape_interval), 1)`; summary coverage uses the whole window. Coverage is an estimate: interval jitter, scrape configuration changes and gaps affect it; count alone does not prove continuous monitoring. Missing/failed scrapes produce no probe samples and reduce coverage, never fabricated successes. Gray frontend buckets have coverage <80% or no ratio. Other buckets are green only at 100% observed success, otherwise red. Exact numeric values are in bucket tooltips and summaries. History expiry = generation + 3 × its refresh interval, independent of current. Expired history is not rendered as fresh history.
+
+`last_http_status_code` is the most recent `probe_http_status_code` sample in the bucket, queried using `last_over_time(...)`. It is null for empty buckets, missing metrics, no HTTP response (code 0), or invalid codes outside integer 100–599. Older publishers may omit it. This is the last code, not a claim that every check in the bucket returned it; bucket state is derived from success ratio and coverage, not the code.
 
 ## Inventory and matching
 
@@ -77,4 +79,4 @@ Labels: `beacon_publish` defaults to `"true"`, `beacon_hidden` defaults to `"fal
 
 ## Browser policy
 
-The page groups by configured observer. It makes no aggregate all/any/quorum health claim. It unions inventories from all successful in-memory snapshots to retain rows under deployment skew and represents omitted observations as unknown. Hidden at any observer means not shown anywhere in this page (conservative skew policy). There is no hardcoded service list. Observer reachability, snapshot freshness and observed status remain distinct; an unreachable observer may still have valid short-lived observations. All unreachable observers trigger the monitoring-failure banner, not a mass service-down claim. No localStorage, IndexedDB, service worker, or external snapshot fallback is used.
+The page groups by service, with one history row per configured observer and a compact observer reachability list above the services. It makes no aggregate all/any/quorum health claim. It unions inventories from all successful in-memory snapshots to retain rows under deployment skew and represents omitted observations as unknown. Hidden at any observer means not shown anywhere in this page (conservative skew policy). There is no hardcoded service list. Observer reachability, snapshot freshness and observed status remain distinct; an unreachable observer may still have valid short-lived observations. All unreachable observers trigger the monitoring-failure banner, not a mass service-down claim. No localStorage, IndexedDB, service worker, or external snapshot fallback is used.

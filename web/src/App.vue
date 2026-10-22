@@ -10,6 +10,7 @@ import {
   visibleInventory,
 } from "./api";
 import type { Observer, Observation } from "./api";
+import HistoryBar from "./HistoryBar.vue";
 
 const title = ref("Service status");
 const observers = ref<Observer[]>([]);
@@ -156,9 +157,43 @@ onUnmounted(() => {
           </h2>
         </div>
       </section>
+      <ul class="server-list" aria-label="Monitoring servers">
+        <li v-for="observer in observers" :key="observer.config.id">
+          <span
+            class="server-icon"
+            :class="
+              observer.loading
+                ? 'unknown'
+                : observer.reachable
+                  ? 'healthy'
+                  : 'down'
+            "
+            aria-hidden="true"
+            >{{ observer.loading ? "◌" : observer.reachable ? "✓" : "×" }}</span
+          >
+          <span>{{ observer.config.name }}</span>
+          <span
+            class="pill"
+            :class="
+              observer.loading
+                ? 'unknown'
+                : observer.reachable
+                  ? 'healthy'
+                  : 'down'
+            "
+            >{{
+              observer.loading
+                ? "Connecting"
+                : observer.reachable
+                  ? "Online"
+                  : "Offline"
+            }}</span
+          >
+        </li>
+      </ul>
       <div class="section-heading">
         <div>
-          <h2>Status by location</h2>
+          <h2>Status by service</h2>
         </div>
         <div class="segmented" aria-label="History window">
           <button
@@ -174,64 +209,46 @@ onUnmounted(() => {
           </button>
         </div>
       </div>
-      <section
-        v-for="observer in observers"
-        :key="observer.config.id"
-        class="location"
-      >
-        <div class="location-header">
+      <section v-for="service in inventory" :key="service.id" class="service">
+        <div class="service-header">
           <div>
-            <h3>
-              <span class="location-icon">⌖</span> {{ observer.config.name }}
-            </h3>
-            <p>
-              {{ inventory.length }} services<span v-if="observer.current">
-                · {{ lastChecked(observer.current.generated_at) }}</span
-              >
-            </p>
+            <h3>{{ service.name }}</h3>
+            <span class="hostname"
+              >{{ service.id
+              }}<span v-if="service.hosting_location">
+                · hosted at {{ service.hosting_location }}</span
+              ></span
+            >
           </div>
-          <span
-            class="pill"
-            :class="observer.reachable ? 'healthy' : 'unknown'"
-            >{{
-              observer.loading
-                ? "Connecting"
-                : observer.reachable
-                  ? "Publisher reachable"
-                  : "Observer unavailable"
-            }}</span
-          >
         </div>
-        <div
-          v-if="!observer.reachable && !observer.loading"
-          class="observer-warning"
+        <article
+          v-for="observer in observers"
+          :key="observer.config.id"
+          class="observer-row"
         >
-          Publisher unreachable: service status unknown.
-        </div>
-        <div
-          v-if="observer.current && now >= observer.current.expires_at"
-          class="observer-warning"
-        >
-          Status out of date. Waiting for an update.
-        </div>
-        <article v-for="service in inventory" :key="service.id" class="service">
           <div class="service-top">
             <div class="service-title">
               <span class="dot" :class="status(observer, service)"></span>
               <div>
-                <h4>{{ service.name }}</h4>
-                <span class="hostname"
-                  >{{ service.id
-                  }}<span v-if="service.hosting_location">
-                    · hosted at {{ service.hosting_location }}</span
-                  ></span
-                >
+                <h4>{{ observer.config.name }}</h4>
               </div>
             </div>
             <span class="state" :class="status(observer, service)">{{
               status(observer, service)
             }}</span>
           </div>
+          <p
+            v-if="!observer.reachable && !observer.loading"
+            class="observer-warning"
+          >
+            Publisher unreachable: service status unknown.
+          </p>
+          <p
+            v-else-if="observer.current && now >= observer.current.expires_at"
+            class="observer-warning"
+          >
+            Status out of date. Waiting for an update.
+          </p>
           <div class="service-detail">
             <span
               >{{ lastChecked(observation(observer, service.id)?.observed_at)
@@ -259,32 +276,18 @@ onUnmounted(() => {
               {{ percent(history(observer, service.id)?.coverage) }}</span
             >
           </div>
-          <div class="history" aria-label="Check history">
-            <span
-              v-for="bucket in history(observer, service.id)?.buckets ?? []"
-              :key="bucket.ends_at"
-              :class="
-                bucket.coverage < 0.8 || bucket.observed_success_ratio == null
-                  ? 'unknown'
-                  : bucket.observed_success_ratio === 1
-                    ? 'healthy'
-                    : 'down'
-              "
-              :title="`${new Date(bucket.ends_at * 1000).toISOString()}: success rate ${percent(bucket.observed_success_ratio)}, checks received ${percent(bucket.coverage)}`"
-            ></span
-            ><span v-if="!history(observer, service.id)" class="no-history"
-              >History unavailable</span
-            >
-          </div>
+          <HistoryBar
+            :buckets="history(observer, service.id)?.buckets"
+            :bucket-seconds="observer[period]?.bucket_seconds ?? 0"
+            :label="`${service.name} · ${observer.config.name}`"
+          />
         </article>
-        <p v-if="!inventory.length" class="empty">
-          {{
-            observer.loading
-              ? "Checking services…"
-              : "No service information available."
-          }}
-        </p>
       </section>
+      <p v-if="!inventory.length && !configError" class="empty">
+        {{
+          loading ? "Checking services…" : "No service information available."
+        }}
+      </p>
     </main>
     <footer>
       <span

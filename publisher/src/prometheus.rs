@@ -204,6 +204,16 @@ impl Prometheus {
             )
             .await?;
         let expected = bucket as f64 / r.scrape_seconds as f64;
+        let codes = self
+            .query(
+                &format!(
+                    "last_over_time({}[{bucket}s])",
+                    self.selector("probe_http_status_code")
+                ),
+                end,
+                Some((window, bucket)),
+            )
+            .await?;
         let services = self
             .services
             .iter()
@@ -226,6 +236,11 @@ impl Prometheus {
                             observed_success_ratio: ratio.filter(|_| samples > 0),
                             coverage: (samples as f64 / expected).min(1.0),
                             samples,
+                            last_http_status_code: at(&codes, &s.target, ends_at)
+                                .filter(|v| {
+                                    samples > 0 && (100.0..=599.0).contains(v) && v.fract() == 0.0
+                                })
+                                .map(|v| v as u16),
                         }
                     })
                     .collect();
