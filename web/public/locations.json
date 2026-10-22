@@ -2,9 +2,14 @@
   "title": "Service status",
   "locations": [
     {
-      "id": "primary",
-      "name": "Primary server",
-      "url": "http://localhost:8080"
+      "id": "hp",
+      "name": "HP",
+      "url": "https://beacon-hp.guzek.uk"
+    },
+    {
+      "id": "pi",
+      "name": "Pi",
+      "url": "https://beacon-pi.guzek.uk"
     }
   ]
 }
