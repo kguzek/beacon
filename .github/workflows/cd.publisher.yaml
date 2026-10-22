@@ -6,6 +6,7 @@ on:
       - publisher/**
       - Cargo.toml
       - Cargo.lock
+      - Cross.toml
       - .containerignore
       - .github/workflows/cd.publisher.yaml
   workflow_dispatch:
@@ -21,6 +22,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, armv7]
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -28,14 +33,82 @@ jobs:
       - name: Set image name
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/publisher" >> "$GITHUB_ENV"
 
-      - name: Build publisher image
+      - name: Build AMD64 publisher image
+        if: matrix.arch == 'amd64'
         run: |
           podman build \
             --file publisher/Containerfile \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --tag "${IMAGE}:${GITHUB_SHA}" \
+            --tag "${IMAGE}:${GITHUB_SHA}-amd64" \
             .
+
+      - name: Set up Rust for ARMv7 cross-compilation
+        if: matrix.arch == 'armv7'
+        run: rustup toolchain install 1.96.0 --profile minimal
+
+      - name: Install cross
+        if: matrix.arch == 'armv7'
+        # Pin cross because current Rust toolchains need newer cross images than 0.2.5.
+        run: cargo +1.96.0 install cross --git https://github.com/cross-rs/cross --rev 526d03ddcd2f70e683074b3ea6f75ed300f33132 --locked
+
+      - name: Cross-compile ARMv7 publisher
+        if: matrix.arch == 'armv7'
+        env:
+          CROSS_CONTAINER_ENGINE: podman
+        run: cross +1.96.0 build --locked --release -p beacon-publisher --target armv7-unknown-linux-musleabihf
+
+      - name: Verify ARMv7 executable is static
+        if: matrix.arch == 'armv7'
+        run: |
+          binary=target/armv7-unknown-linux-musleabihf/release/beacon-publisher
+          readelf -h "$binary" | grep -Eq 'Machine: +ARM$'
+          if readelf -l "$binary" | grep -q INTERP || readelf -d "$binary" | grep -q NEEDED; then
+            echo 'ARMv7 executable requires a dynamic runtime; cannot use scratch' >&2
+            exit 1
+          fi
+
+      - name: Smoke-test ARMv7 executable with QEMU
+        if: matrix.arch == 'armv7'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes qemu-user-static
+          cat > "${RUNNER_TEMP}/smoke.toml" <<EOF
+          [prometheus]
+          url = "http://127.0.0.1:9"
+          [services]
+          path = "${GITHUB_WORKSPACE}/examples/services.yaml"
+          [server]
+          listen = "127.0.0.1:18080"
+          EOF
+          qemu-arm-static target/armv7-unknown-linux-musleabihf/release/beacon-publisher \
+            --config.path examples/config.toml \
+            --config.path "${RUNNER_TEMP}/smoke.toml" &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" || true' EXIT
+          for _ in {1..30}; do
+            kill -0 "$pid"
+            if curl --fail --silent http://127.0.0.1:18080/healthz; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'ARMv7 publisher failed to become healthy' >&2
+          exit 1
+
+      - name: Package ARMv7 publisher image
+        if: matrix.arch == 'armv7'
+        run: |
+          context="${RUNNER_TEMP}/beacon-armv7"
+          mkdir -p "$context"
+          cp target/armv7-unknown-linux-musleabihf/release/beacon-publisher "$context/beacon-publisher"
+          podman build \
+            --platform linux/arm/v7 \
+            --file publisher/Containerfile.armv7 \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${IMAGE}:${GITHUB_SHA}-armv7" \
+            "$context"
 
       - name: Log in to GHCR
         env:
@@ -43,10 +116,29 @@ jobs:
         run: printf '%s' "$GHCR_TOKEN" | podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Push publisher image
-        run: podman push "${IMAGE}:${GITHUB_SHA}"
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: podman push "${IMAGE}:${GITHUB_SHA}-${ARCH}"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/publisher" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publish multi-architecture publisher image
+        run: |
+          podman manifest create beacon-release
+          podman manifest add beacon-release "docker://${IMAGE}:${GITHUB_SHA}-amd64"
+          podman manifest add --arch arm --variant v7 beacon-release "docker://${IMAGE}:${GITHUB_SHA}-armv7"
+          podman manifest push --all beacon-release "docker://${IMAGE}:${GITHUB_SHA}"
 
       - name: Push latest publisher image
         if: github.ref == 'refs/heads/main'
-        run: |
-          podman tag "${IMAGE}:${GITHUB_SHA}" "${IMAGE}:latest"
-          podman push "${IMAGE}:latest"
+        run: podman manifest push --all beacon-release "docker://${IMAGE}:latest"

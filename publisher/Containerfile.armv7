@@ -1,0 +1,6 @@
+# Build context must contain the statically linked ARMv7 executable as beacon-publisher.
+FROM scratch
+COPY beacon-publisher /usr/local/bin/beacon-publisher
+USER 65532:65532
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/beacon-publisher"]

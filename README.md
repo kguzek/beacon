@@ -15,7 +15,7 @@ The page itself is entirely static, so it can live on a CDN or any static hostin
 - **Frontend:** Vue 3, Vite, and TypeScript, managed with pnpm.
 - **Publisher:** Rust with Axum and Tokio.
 - **Monitoring:** Your existing Prometheus and Blackbox Exporter.
-- **Containers:** OCI images built from Quay-hosted bases, with Containerfiles for both components.
+- **Containers:** OCI images, with Containerfiles for both components.
 
 ## Repository
 
@@ -27,6 +27,10 @@ The page itself is entirely static, so it can live on a CDN or any static hostin
 To use Beacon, configure each publisher with its Prometheus address and shared service inventory, then add the public publisher URLs to `web/public/locations.json`. Build the page with `pnpm build` and deploy `web/dist/` to your static host.
 
 See the [API documentation](docs/API.md) for configuration options and response formats.
+
+## Publisher containers
+
+Publisher images are available at `ghcr.io/<owner>/<repository>/publisher:latest` for Linux AMD64 and 32-bit ARMv7 (`armv7l`). Your container engine selects the matching architecture automatically. Commit-specific tags are also available; ARM64 is not currently supported.
 
 ## Publisher configuration
 
