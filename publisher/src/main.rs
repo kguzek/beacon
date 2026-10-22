@@ -1,23 +1,15 @@
 use anyhow::{Context, Result, bail};
 use beacon_publisher::{Snapshots, StateData, config::Config, router, spawn_refreshes};
 use std::{
-    io::{self, IsTerminal},
     path::Path,
     sync::{Arc, RwLock},
 };
 
+mod logging;
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .pretty()
-        .with_target(false)
-        .with_ansi(io::stderr().is_terminal())
-        .with_writer(io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    logging::init();
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         "starting Beacon publisher"
