@@ -18,17 +18,23 @@ concurrency:
 
 jobs:
   check:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         include:
-          - command: pnpm exec prettier --check web/ package.json pnpm-workspace.yaml
-          - command: pnpm lint
-          - command: pnpm test
-          - command: pnpm schema && git diff --exit-code -- docs/schema/
-          - command: pnpm build
+          - name: check formatting
+            command: pnpm exec prettier --check web/ package.json pnpm-workspace.yaml
+          - name: lint
+            command: pnpm lint
+          - name: test
+            command: pnpm test
+          - name: check schema
+            command: pnpm schema && git diff --exit-code -- docs/schema/
+          - name: build
+            command: pnpm build
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
