@@ -24,6 +24,11 @@ header {
   align-items: center;
   justify-content: space-between;
 }
+.brand-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .brand {
   color: #f1f5f9;
   text-decoration: none;
@@ -34,11 +39,13 @@ header {
   align-items: center;
   gap: 12px;
 }
-a {
+a,
+.brand-text {
   position: relative;
   text-decoration: none;
 }
-a::after {
+a:not(.brand)::after,
+.brand-text::after {
   content: "";
   position: absolute;
   left: 0;
@@ -55,10 +62,18 @@ a::after {
     transform 280ms cubic-bezier(0.16, 1, 0.3, 1),
     opacity 180ms ease-out;
 }
-a:hover::after,
-a:focus-visible::after {
+a:not(.brand):hover::after,
+a:not(.brand):focus-visible::after,
+.brand:hover .brand-text::after,
+.brand:focus-visible .brand-text::after {
   transform: scaleX(1);
   opacity: 1;
+}
+.brand-text::after {
+  bottom: 1px;
+}
+footer .footer-brand::after {
+  bottom: 0;
 }
 .beacon {
   color: #7dd3b0;
@@ -680,7 +695,8 @@ footer .footer-brand {
   .tooltip-fade-leave-active {
     transition: none;
   }
-  a::after {
+  a::after,
+  .brand-text::after {
     transition: none;
   }
 }

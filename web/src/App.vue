@@ -222,11 +222,13 @@ onUnmounted(() => {
 <template>
   <div class="shell">
     <header>
-      <a class="brand" href="https://git.guzek.uk/kguzek/beacon"
-        ><span class="beacon">◉</span> beacon<span class="brand-label"
-          >SYSTEM STATUS</span
-        ></a
-      ><span class="live">Live<i aria-hidden="true"></i></span>
+      <div class="brand-group">
+        <a class="brand" href="https://git.guzek.uk/kguzek/beacon"
+          ><span class="beacon">◉</span
+          ><span class="brand-text">beacon</span></a
+        ><span class="brand-label">SYSTEM STATUS</span>
+      </div>
+      <span class="live">Live<i aria-hidden="true"></i></span>
     </header>
     <main>
       <div class="eyebrow">SERVICE HEALTH, AT A GLANCE</div>
