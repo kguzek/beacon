@@ -226,6 +226,39 @@ fn upstream_validation_and_freshness() {
     assert!(!fresh(110.0, 100.0, 10.0));
 }
 
+#[test]
+fn historical_series_survive_grouping_label_changes() {
+    let services = inventory(yaml()).unwrap();
+    let old = json!({
+        "metric": {"instance": services[0].target},
+        "values": [[30, "1"], [60, "1"]]
+    });
+    let new = json!({
+        "metric": {"instance": services[0].target, "beacon_label_group": "Websites"},
+        "values": [[60, "1"], [90, "0"]]
+    });
+    let encode = |result: Value| {
+        serde_json::to_vec(
+            &json!({"status": "success", "data": {"resultType": "matrix", "result": result}}),
+        )
+        .unwrap()
+    };
+    // Input order does not affect stitching, and the overlapping bucket is counted once.
+    for series in [
+        json!([old.clone(), new.clone()]),
+        json!([new.clone(), old.clone()]),
+    ] {
+        let parsed = parse(&encode(series), true, &services).unwrap();
+        assert_eq!(
+            parsed[&services[0].target],
+            [(30.0, 1.0), (60.0, 1.0), (90.0, 0.0)]
+        );
+    }
+    let mut conflicting = new;
+    conflicting["values"][0][1] = json!("0");
+    assert!(parse(&encode(json!([old, conflicting])), true, &services).is_err());
+}
+
 #[derive(Clone)]
 struct Mock {
     requests: Arc<AtomicUsize>,

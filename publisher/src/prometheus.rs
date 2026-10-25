@@ -296,7 +296,7 @@ pub fn parse(body: &[u8], range: bool, services: &[Service]) -> Result<Samples> 
             continue;
         }
         ensure!(
-            !result.contains_key(target),
+            range || !result.contains_key(target),
             "ambiguous series for inventory target"
         );
         let raw = if range {
@@ -319,7 +319,25 @@ pub fn parse(body: &[u8], range: bool, services: &[Service]) -> Result<Samples> 
                 points.push((time, number));
             }
         }
-        result.insert(target.clone(), points);
+        result
+            .entry(target.clone())
+            .or_insert_with(Vec::new)
+            .extend(points);
+    }
+    if range {
+        for points in result.values_mut() {
+            // Metadata changes create new series for the same target. Stitch their
+            // history together, but never choose between conflicting observations.
+            points.sort_by(|a, b| a.0.total_cmp(&b.0));
+            for pair in points.windows(2) {
+                ensure!(
+                    pair[0].0 != pair[1].0 || pair[0].1 == pair[1].1,
+                    "ambiguous series for inventory target"
+                );
+            }
+            points.dedup_by(|a, b| a.0 == b.0);
+            ensure!(points.len() <= 1001, "too many upstream samples");
+        }
     }
     Ok(result)
 }
