@@ -140,7 +140,7 @@ test("monitoring failure does not invalidate retained fresh service health", asy
   );
   await page.locator(".intro").hover();
   isUnreachable = true;
-  await page.clock.fastForward(30_000);
+  await page.clock.fastForward(31_000);
   await expect(page.getByRole("alert")).toHaveText(
     "Status updates are temporarily unavailable.",
   );
@@ -148,12 +148,92 @@ test("monitoring failure does not invalidate retained fresh service health", asy
   await expect(page.locator(".state.healthy")).toHaveCount(1);
   await page.clock.fastForward(61_000);
   await expect(overview).toContainText("Service status unavailable");
-  await expect(overview).toContainText("0 online · 0 down · 1 unknown");
+  await expect(overview.locator(".breakdown")).toHaveText("1 unknown");
+  await overview.getByText("1 unknown", { exact: true }).hover();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "Service Example has an unknown status.",
+  );
+  await page.locator(".intro").hover();
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
   await expect(page.locator(".state.unknown")).toHaveCount(1);
   await page.locator(".state.unknown").hover();
   await expect(page.getByRole("tooltip")).toHaveText(
     "There isn’t a recent result from this location, so we can’t confirm the service’s status.",
   );
+});
+
+test("polls each publisher just after its snapshots instead of retaining page-load offset", async ({
+  page,
+}) => {
+  const start = new Date("2026-10-25T12:00:00Z");
+  const epoch = start.getTime() / 1000;
+  await page.clock.install({ time: start });
+  await page.clock.pauseAt(start);
+  const requests: Record<string, number[]> = { hp: [], pi: [] };
+  await page.route("**/locations.json", async (route) =>
+    route.fulfill({
+      json: {
+        locations: ["hp", "pi"].map((id) => ({
+          id,
+          name: id,
+          url: `https://${id}.test`,
+        })),
+      },
+    }),
+  );
+  await page.route("https://*.test/**", async (route) => {
+    const url = new URL(route.request().url());
+    const id = url.hostname.split(".", 1)[0]!;
+    const now = await page.evaluate(() => Date.now() / 1000);
+    const phase = epoch - (id === "hp" ? 17 : 7);
+    const generated = phase + Math.floor((now - phase) / 30) * 30;
+    if (url.pathname.endsWith("current")) {
+      requests[id]!.push(now - epoch);
+    }
+    return route.fulfill({
+      json: {
+        schema_version: 1,
+        location: { id, name: id },
+        generated_at: generated,
+        expires_at: generated + 120,
+        window_seconds: 3600,
+        bucket_seconds: 30,
+        services: [
+          {
+            id: "example.org",
+            name: "Example",
+            hidden: false,
+            hosting_location: null,
+            status: "healthy",
+            observed_at: generated,
+            expires_at: generated + 120,
+            duration_seconds: null,
+            observed_success_ratio: 1,
+            coverage: 1,
+            buckets: [],
+          },
+        ],
+      },
+    });
+  });
+  await page.goto("/");
+  await expect(page.locator(".state.healthy")).toHaveCount(2);
+  const rows = page.locator(".observer-row");
+  await expect(rows.nth(0)).toContainText("Last checked 17s ago");
+  await expect(rows.nth(1)).toContainText("Last checked 7s ago");
+  await page.clock.runFor(14_000);
+  await expect.poll(() => requests.hp!.length).toBe(2);
+  expect(requests.hp![1]).toBeCloseTo(13.5, 1);
+  expect(requests.pi).toHaveLength(1);
+  await expect(rows.nth(0)).toContainText("Last checked 1s ago");
+  await page.clock.runFor(10_000);
+  await expect.poll(() => requests.pi!.length).toBe(2);
+  expect(requests.pi![1]).toBeCloseTo(23.5, 1);
+  await expect(rows.nth(1)).toContainText("Last checked 1s ago");
+  await page.clock.runFor(20_000);
+  await expect.poll(() => requests.hp!.length).toBe(3);
+  expect(requests.hp![2]).toBeCloseTo(43.5, 1);
+  await expect(rows.nth(0)).toContainText("Last checked 1s ago");
 });
 
 test("initial requests show checking and configuration failures keep their dedicated message", async ({
@@ -299,7 +379,7 @@ test("search reveals collapsed groups without changing full health summaries or 
   const downBadge = container.getByText("1 down", { exact: true });
   await downBadge.hover();
   await expect(page.getByRole("tooltip")).toContainText(
-    "1 online · 1 down · 0 unknown",
+    "1 online · 1 down. Service Prometheus is currently down.",
   );
   await expect(page.getByRole("tooltip")).toContainText(
     "Availability may vary by location.",
@@ -316,7 +396,7 @@ test("search reveals collapsed groups without changing full health summaries or 
     .getByText("All online", { exact: true });
   await healthyBadge.hover();
   await expect(page.getByRole("tooltip")).toContainText(
-    "1 online · 0 down · 0 unknown",
+    "1 online. Every service in this group was recently confirmed working from every monitoring location.",
   );
   await page.locator(".intro").hover();
   await expect(page.getByRole("tooltip")).toHaveCount(0);
@@ -326,6 +406,9 @@ test("search reveals collapsed groups without changing full health summaries or 
   await unknownBadge.focus();
   await expect(page.getByRole("tooltip")).toContainText(
     "we can’t confirm their status",
+  );
+  await expect(page.getByRole("tooltip")).toContainText(
+    "Service Website has an unknown status.",
   );
   await page.keyboard.press("Escape");
   await expect(page.getByRole("tooltip")).toHaveCount(0);

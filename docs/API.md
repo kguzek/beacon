@@ -290,7 +290,9 @@ The following is an excerpt; a real response also includes `schema_version`, `lo
 
 Coverage is `min(samples / (bucket_seconds / scrape_seconds), 1)`; service summary coverage uses the whole window. It is an estimate: scrape timing jitter, configuration changes and gaps affect it. Missing or failed scrapes reduce coverage; they are never counted as successful probes.
 
-`last_http_status_code` is `null` for empty buckets, missing metrics, no HTTP response (code 0), or values outside integer 100–599. Older publishers may omit this field. Historical health is based on success ratio and coverage, not the HTTP code alone.
+`last_http_status_code` is `null` for empty buckets, missing metrics, no HTTP response (code 0), or values outside integer 100–599. It is also `null` when label changes leave multiple series with differing last codes in the same bucket, since their order cannot be established. Older publishers may omit this field. Historical health is based on success ratio and coverage, not the HTTP code alone.
+
+Historical sample counts and success totals are aggregated by target (`instance`) across label changes before calculating success ratios. A bucket crossing a metadata change therefore retains both sets of checks, with a sample-weighted success ratio, rather than rejecting the snapshot or averaging per-series averages.
 
 ### Windows, buckets and expiry
 
@@ -305,6 +307,8 @@ Window durations and routes are fixed; bucket widths are configurable at startup
 Only completed buckets are queried, aligned to UTC epoch multiples. Each bucket excludes its start and includes its end. The publisher runs `avg_over_time(probe_success[width])`, `count_over_time(...)` and `last_over_time(probe_http_status_code[width])` through Prometheus `query_range` for the configured job.
 
 History expires at its generation time plus **three times its refresh interval**, independently of current data. The browser does not display expired history as fresh history.
+
+The browser schedules each observer’s streams independently, using snapshot generation times and the measured publication cadence rather than a fixed offset from page load. A short settling margin and bounded one-second retries allow for snapshots still being generated. Failures or expired snapshots fall back to the normal polling interval. “Last checked” still uses each probe’s actual `observed_at` timestamp: synchronizing snapshot retrieval does not make an older probe result newly checked.
 
 History-bar colors mean:
 

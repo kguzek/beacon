@@ -293,9 +293,38 @@ async fn upstream(
     let result = if params.contains_key("step") {
         let start: f64 = params["start"].parse().unwrap();
         let step: f64 = params["step"].parse().unwrap();
-        let value = if query.starts_with("count_") {
+        if mode == 6 {
+            // A metadata change within one bucket: old series has one success,
+            // new series has two failures. Aggregation must use 1/3, not 1/2.
+            let selector = "probe_success{job=\"blackbox_http\"}";
+            let count = format!("sum by (instance) (count_over_time({selector}[{step}s]))");
+            let average =
+                format!("sum by (instance) (sum_over_time({selector}[{step}s])) / {count}");
+            let code =
+                format!("last_over_time(probe_http_status_code{{job=\"blackbox_http\"}}[{step}s])");
+            let result = if query == &count || query == &average {
+                json!([{
+                    "metric": {"instance": "https://example.org/private?token=secret"},
+                    "values": [[start, if query == &count { "3" } else { "0.3333333333333333" }]]
+                }])
+            } else {
+                assert_eq!(
+                    query,
+                    &format!("max by (instance) ({code}) == min by (instance) ({code})")
+                );
+                // The last HTTP codes differ (200 and 503); comparison omits it.
+                json!([])
+            };
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "success", "data": {"resultType": "matrix", "result": result}
+                })),
+            );
+        }
+        let value = if query.starts_with("sum by (instance) (count_over_time(") {
             (step / 30.0 / 2.0).ceil().to_string()
-        } else if query.starts_with("last_over_time(probe_http_status_code") {
+        } else if query.starts_with("max by (instance) (last_over_time(probe_http_status_code") {
             match mode {
                 1 => "0",
                 2 => "600",
@@ -422,6 +451,25 @@ async fn history_coverage_and_fixed_buckets() {
         let value: Value =
             serde_json::from_slice(&upstream.history(3000000.0, "day").await.unwrap()).unwrap();
         assert!(value["services"][0]["buckets"][0]["last_http_status_code"].is_null());
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn history_aggregates_buckets_crossing_metadata_changes() {
+    let (config, mock, task) = mock().await;
+    mock.mode.store(6, Ordering::SeqCst);
+    let upstream = Prometheus::new(config, inventory(yaml()).unwrap()).unwrap();
+    for period in ["hour", "day", "month"] {
+        let value: Value =
+            serde_json::from_slice(&upstream.history(3000000.0, period).await.unwrap()).unwrap();
+        let service = &value["services"][0];
+        let bucket = &service["buckets"][0];
+        assert_eq!(bucket["samples"], 3);
+        assert_eq!(bucket["observed_success_ratio"], 1.0 / 3.0);
+        assert_eq!(service["observed_success_ratio"], 1.0 / 3.0);
+        assert!(bucket["last_http_status_code"].is_null());
+        assert_eq!(service["buckets"][1]["samples"], 0);
     }
     task.abort();
 }

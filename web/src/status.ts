@@ -47,3 +47,24 @@ export const healthStates = [
   { id: "down", label: "down" },
   { id: "unknown", label: "unknown" },
 ] as const;
+
+export function describeServices(
+  names: string[],
+  state: (typeof healthStates)[number]["id"],
+) {
+  if (names.length === 0) {
+    return "";
+  }
+  if (state === "healthy") {
+    return "";
+  }
+  const list = new Intl.ListFormat("en", {
+    style: "long",
+    type: "conjunction",
+  }).format(names);
+  const subject = `${names.length === 1 ? "Service" : "Services"} ${list}`;
+  const verb = names.length === 1 ? "is" : "are";
+  return state === "unknown"
+    ? `${subject} ${names.length === 1 ? "has an unknown status" : "have an unknown status"}.`
+    : `${subject} ${verb} currently down.`;
+}

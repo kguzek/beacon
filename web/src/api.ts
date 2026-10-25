@@ -1,5 +1,7 @@
 import * as z from "zod";
 
+import { describeServices, healthStates } from "./status";
+
 const timeSchema = z.number().nonnegative();
 const ratioSchema = z.number().min(0).max(1);
 const labelsSchema = z
@@ -198,8 +200,15 @@ export function healthSummary(
   now: number,
 ) {
   const counts = { healthy: 0, down: 0, unknown: 0 };
+  const names: Record<Observation["status"], string[]> = {
+    healthy: [],
+    down: [],
+    unknown: [],
+  };
   for (const service of services) {
-    counts[combinedStatus(service.id, observers, now)]++;
+    const state = combinedStatus(service.id, observers, now);
+    counts[state]++;
+    names[state].push(service.name);
   }
   const total = services.length;
   const headline =
@@ -212,10 +221,23 @@ export function healthSummary(
           : counts.down > 0
             ? "Partial outage"
             : "Service status incomplete";
+  const descriptions = {
+    healthy: describeServices(names.healthy, "healthy"),
+    down: describeServices(names.down, "down"),
+    unknown: describeServices(names.unknown, "unknown"),
+  };
   return {
     ...counts,
     headline,
-    breakdown: `${String(counts.healthy)} online · ${String(counts.down)} down · ${String(counts.unknown)} unknown`,
+    descriptions,
+    description: healthStates
+      .map((state) => descriptions[state.id])
+      .filter(Boolean)
+      .join(" "),
+    breakdown: healthStates
+      .filter((state) => counts[state.id] > 0)
+      .map((state) => `${String(counts[state.id])} ${state.label}`)
+      .join(" · "),
   };
 }
 export function filterServices(services: Observation[], query: string) {

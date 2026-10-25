@@ -190,27 +190,31 @@ impl Prometheus {
         };
         let end = (now / bucket as f64).floor() * bucket as f64;
         let selector = self.selector("probe_success");
+        // Metadata changes split a target into multiple series, including within
+        // a bucket. Combine sample totals, not per-series averages or counts.
+        let count_query = format!("sum by (instance) (count_over_time({selector}[{bucket}s]))");
         let averages = self
             .query(
-                &format!("avg_over_time({selector}[{bucket}s])"),
+                &format!(
+                    "sum by (instance) (sum_over_time({selector}[{bucket}s])) / {count_query}"
+                ),
                 end,
                 Some((window, bucket)),
             )
             .await?;
         let counts = self
-            .query(
-                &format!("count_over_time({selector}[{bucket}s])"),
-                end,
-                Some((window, bucket)),
-            )
+            .query(&count_query, end, Some((window, bucket)))
             .await?;
         let expected = bucket as f64 / r.scrape_seconds as f64;
+        let last_code = format!(
+            "last_over_time({}[{bucket}s])",
+            self.selector("probe_http_status_code")
+        );
+        // Without an original sample timestamp we cannot order differing codes
+        // from old/new label sets. Omit that optional detail, not the history.
         let codes = self
             .query(
-                &format!(
-                    "last_over_time({}[{bucket}s])",
-                    self.selector("probe_http_status_code")
-                ),
+                &format!("max by (instance) ({last_code}) == min by (instance) ({last_code})"),
                 end,
                 Some((window, bucket)),
             )

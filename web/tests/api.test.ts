@@ -107,6 +107,9 @@ describe("public contract and presentation", () => {
     const summary = () =>
       healthSummary(visibleInventory(observers), observers, 150);
     expect(summary().headline).toBe("All services online");
+    expect(summary().breakdown).toBe("1 online");
+    expect(summary().descriptions.healthy).toBe("");
+    expect(summary().description).not.toContain("Example");
     current.services[0]!.status = "down";
     expect(summary().headline).toBe("All services down");
     current.services.push({
@@ -118,6 +121,7 @@ describe("public contract and presentation", () => {
       headline: "Partial outage",
       down: 1,
       unknown: 1,
+      breakdown: "1 down · 1 unknown",
     });
     current.services[0]!.status = "healthy";
     expect(summary().headline).toBe("Service status incomplete");
@@ -126,6 +130,31 @@ describe("public contract and presentation", () => {
     expect(healthSummary([], observers, 150).headline).toBe(
       "Service status unavailable",
     );
+  });
+  it("names every service in each state, including plural lists, without hidden services", () => {
+    const current = snapshot();
+    current.services[0]!.name = "Navidrome";
+    current.services[0]!.status = "down";
+    current.services.push(
+      { ...current.services[0]!, id: "jellyfin.test", name: "Jellyfin" },
+      {
+        ...current.services[0]!,
+        id: "kuma.test",
+        name: "Uptime Kuma (WCSS)",
+        status: "unknown",
+      },
+    );
+    const observers = [observer("primary", current)];
+    const result = healthSummary(visibleInventory(observers), observers, 150);
+    expect(result.breakdown).toBe("2 down · 1 unknown");
+    expect(result.descriptions.down).toBe(
+      "Services Jellyfin and Navidrome are currently down.",
+    );
+    expect(result.descriptions.unknown).toBe(
+      "Service Uptime Kuma (WCSS) has an unknown status.",
+    );
+    expect(result.description).not.toContain("Hidden");
+    expect(healthSummary([], observers, 150).breakdown).toBe("");
   });
   it("resolves skew by configured priority, not missing legacy labels, without mutating snapshots", () => {
     const first = snapshot();

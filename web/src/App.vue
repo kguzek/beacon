@@ -18,6 +18,7 @@ import HistoryBar from "./HistoryBar.vue";
 import StateTooltip from "./StateTooltip.vue";
 import { useServicePlaceholder } from "./use-service-placeholder";
 import { useLocalStorage } from "./use-local-storage";
+import { SnapshotPollSchedule } from "./polling";
 import {
   combinedDescriptions,
   groupDescriptions,
@@ -116,7 +117,11 @@ function schedule(callback: () => void, delay: number) {
 async function refresh(
   observer: Observer,
   kind: "current" | "hour" | "day" | "month",
+  polling = new SnapshotPollSchedule(
+    kind === "current" || kind === "hour" ? 30 : kind === "day" ? 300 : 1800,
+  ),
 ) {
+  let delay = polling.failureDelay();
   try {
     if (kind === "current") {
       const value = await fetchJson(
@@ -127,6 +132,7 @@ async function refresh(
         throw new Error("Observer identity mismatch");
       observer.current = markRaw(value);
       observer.reachable = true;
+      delay = polling.nextDelay(value, Date.now() / 1000);
     } else {
       const value = await fetchJson(
         endpoint(observer.config.url, `/v1/history/${kind}`),
@@ -135,22 +141,16 @@ async function refresh(
       if (value.location.id !== observer.config.id)
         throw new Error("Observer identity mismatch");
       observer[kind] = markRaw(value);
+      delay = polling.nextDelay(value, Date.now() / 1000);
     }
   } catch {
     if (kind === "current") observer.reachable = false;
     else observer[kind] = null;
   } finally {
     if (kind === "current") observer.loading = false;
-    schedule(
-      () => {
-        void refresh(observer, kind);
-      },
-      kind === "current" || kind === "hour"
-        ? 30000
-        : kind === "day"
-          ? 300000
-          : 1800000,
-    );
+    schedule(() => {
+      void refresh(observer, kind, polling);
+    }, delay);
   }
 }
 function observation(observer: Observer, id: string) {
@@ -250,18 +250,24 @@ onUnmounted(() => {
           <h2>
             <StateTooltip
               :description="
-                overviewDescriptions[
-                  loading ? 'Checking service status…' : summary.headline
-                ] ?? ''
+                loading
+                  ? (overviewDescriptions['Checking service status…'] ?? '')
+                  : `${summary.description} ${overviewDescriptions[summary.headline] ?? ''}`.trim()
               "
             >
               {{ loading ? "Checking service status…" : summary.headline }}
             </StateTooltip>
           </h2>
           <p v-if="!loading" class="breakdown">
-            <template v-for="(state, index) in healthStates" :key="state.id">
+            <template
+              v-for="(state, index) in healthStates.filter(
+                (state) => summary[state.id] > 0,
+              )"
+              :key="state.id"
+            >
               <span v-if="index" aria-hidden="true"> · </span>
-              <StateTooltip :description="combinedDescriptions[state.id]"
+              <StateTooltip
+                :description="`${summary.descriptions[state.id]} ${combinedDescriptions[state.id]}`.trim()"
                 >{{ summary[state.id] }} {{ state.label }}</StateTooltip
               >
             </template>
@@ -423,7 +429,7 @@ onUnmounted(() => {
                 v-if="group.summary[state.id] > 0"
                 class="group-state"
                 :class="state.id"
-                :description="`${group.summary.breakdown}. ${groupDescriptions[state.id]}`"
+                :description="`${group.summary.breakdown}. ${group.summary.description} ${groupDescriptions[state.id]}`"
                 >{{ group.summary[state.id] }} {{ state.label }}</StateTooltip
               >
             </template>
