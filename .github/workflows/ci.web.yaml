@@ -1,0 +1,157 @@
+name: CI / Web
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - command: pnpm exec prettier --check web/ package.json pnpm-workspace.yaml
+          - command: pnpm lint
+          - command: pnpm test
+          - command: pnpm schema && git diff --exit-code -- docs/schema/
+          - command: pnpm build
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm, Node.js, and dependencies
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          cache: true
+          require-lockfile: true
+
+      - name: Run check
+        run: ${{ matrix.command }}
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm, Node.js, and dependencies
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          cache: true
+          require-lockfile: true
+
+      - name: Install Chromium and system dependencies
+        run: pnpm --filter @beacon/web exec playwright install --with-deps chromium
+
+      - name: Build web app
+        run: pnpm build
+
+      - name: Run browser tests
+        run: pnpm test:e2e --grep-invert 'static OCI frontend' --forbid-only --workers=1 --reporter=html --trace=retain-on-failure
+
+      - name: Upload browser test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-playwright
+          path: |
+            web/playwright-report/
+            web/test-results/
+          retention-days: 7
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm, Node.js, and dependencies
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          cache: true
+          require-lockfile: true
+
+      - name: Install Chromium and system dependencies
+        run: pnpm --filter @beacon/web exec playwright install --with-deps chromium
+
+      - name: Build publisher and web images
+        run: |
+          podman build --file publisher/Containerfile --tag localhost/beacon-publisher:ci .
+          podman build --file web/Containerfile --tag localhost/beacon-web:ci .
+
+      - name: Start publisher and web containers
+        run: |
+          cat > "${RUNNER_TEMP}/locations.json" <<'EOF'
+          {"locations":[{"id":"primary","name":"Primary server","url":"http://localhost:8080"}]}
+          EOF
+          podman network create beacon-ci
+          podman run --detach --name beacon-prometheus \
+            --network beacon-ci --network-alias prometheus \
+            --publish 127.0.0.1:19090:9090 \
+            --volume "${GITHUB_WORKSPACE}/web/tests/fixtures/prometheus.mjs:/prometheus.mjs:ro" \
+            docker.io/library/node:24-alpine node /prometheus.mjs
+          curl --fail --retry 30 --retry-delay 1 --retry-all-errors http://localhost:19090/api/v1/query
+          podman run --detach --name beacon-publisher \
+            --network beacon-ci \
+            --publish 127.0.0.1:8080:8080 \
+            --volume "${GITHUB_WORKSPACE}/examples/config.toml:/etc/beacon/config.toml:ro" \
+            --volume "${GITHUB_WORKSPACE}/examples/services.yaml:/etc/beacon/services.yaml:ro" \
+            localhost/beacon-publisher:ci
+          podman run --detach --name beacon-web \
+            --publish 127.0.0.1:8081:8080 \
+            --volume "${RUNNER_TEMP}/locations.json:/srv/locations.json:ro" \
+            localhost/beacon-web:ci
+          curl --fail --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8080/healthz
+          curl --fail --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8080/v1/current
+          curl --fail --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8081/
+
+      - name: Run live publisher contract test
+        env:
+          BEACON_LIVE: "1"
+          BEACON_WEB_URL: http://localhost:8081
+        run: pnpm test:e2e live.spec.ts --forbid-only --workers=1 --reporter=html --trace=retain-on-failure
+
+      - name: Collect container logs
+        if: ${{ !cancelled() }}
+        run: |
+          podman logs beacon-publisher > "${RUNNER_TEMP}/publisher.log" 2>&1 || true
+          podman logs beacon-web > "${RUNNER_TEMP}/web.log" 2>&1 || true
+          podman logs beacon-prometheus > "${RUNNER_TEMP}/prometheus.log" 2>&1 || true
+
+      - name: Upload integration test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-publisher-integration
+          path: |
+            web/playwright-report/
+            web/test-results/
+            ${{ runner.temp }}/publisher.log
+            ${{ runner.temp }}/web.log
+            ${{ runner.temp }}/prometheus.log
+          retention-days: 7
+
+      - name: Stop containers
+        if: ${{ always() }}
+        run: |
+          podman rm --force beacon-web beacon-publisher beacon-prometheus || true
+          podman network rm beacon-ci || true

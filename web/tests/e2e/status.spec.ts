@@ -492,7 +492,10 @@ test("services group server histories with custom segment tooltips", async ({
   await page.goto("/");
   await expect(page.locator(".service")).toHaveCount(1);
   await expect(page.locator(".observer-row")).toHaveCount(2);
-  const serviceLink = page.getByRole("link", { name: "example.org", exact: true });
+  const serviceLink = page.getByRole("link", {
+    name: "example.org",
+    exact: true,
+  });
   await expect(serviceLink).toHaveAttribute("href", "https://example.org");
   await expect(serviceLink).toHaveAttribute("target", "_blank");
   await expect(serviceLink).toHaveAttribute("rel", "noopener noreferrer");
