@@ -9,7 +9,7 @@ The API is public. Private target URLs, credentials and unrelated scrape labels 
 - [Publisher settings](../examples/config.toml): Prometheus connection, inventory path, HTTP server, refresh intervals and freshness limits.
 - [Service inventory example](../examples/services.yaml): service names, visibility and grouping labels.
 - [Startup arguments](../README.md#publisher-configuration): use `--config.path` to select or layer configuration files. With no arguments, the publisher reads `/etc/beacon/config.toml`.
-- [Browser locations](../web/public/locations.json): the monitoring locations the page contacts, in priority order.
+- [Browser locations example](../locations.example.json): copy to `web/public/locations.json` to configure the monitoring locations the page contacts, in priority order.
 
 For example, start a publisher with a base configuration and local overrides:
 

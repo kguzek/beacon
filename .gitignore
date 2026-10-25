@@ -10,4 +10,5 @@ target/
 dist/
 playwright-report/
 test-results/
+web/public/locations.json
 web/public/locations.local.json

@@ -24,7 +24,7 @@ The page itself is entirely static, so it can live on a CDN or any static hostin
 - `examples/` — sample publisher configuration and service inventory.
 - `compose.yaml` — a deployment template for the publisher.
 
-To use Beacon, configure each publisher with its Prometheus address and shared service inventory, then add the public publisher URLs to `web/public/locations.json`. Build the page with `pnpm build` and deploy `web/dist/` to your static host.
+To use Beacon, configure each publisher with its Prometheus address and shared service inventory, then copy `locations.example.json` to `web/public/locations.json` (which is ignored by Git) and add the public publisher URLs. Build the page with `pnpm build` and deploy `web/dist/` to your static host.
 
 See the [API documentation](docs/API.md) for configuration options and response formats.
 
