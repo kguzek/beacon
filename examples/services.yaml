@@ -1,6 +1,7 @@
 - targets: ["https://example.org/health?private=not-published"]
   labels:
     service: "Example website"
+    beacon_label_group: "Websites"
     beacon_hosting_location: "primary"
 - targets: ["https://hidden.example.org"]
   labels:

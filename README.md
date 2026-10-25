@@ -6,7 +6,7 @@ Beacon turns existing Prometheus and Blackbox Exporter checks into a public stat
 
 A small publisher runs at each monitoring location. It reads the service list already used by Prometheus, collects results on a schedule, and makes selected status information available through a public API. Private target details and unrelated metrics stay private, and page visits don’t trigger extra Prometheus queries.
 
-The status page brings those results together in the browser, grouped by location. If one location becomes unreachable, the others can still report what they see. Old results are marked as unknown rather than showing an outdated healthy or down status.
+The status page brings those results together in the browser, with searchable services and optional collapsible groups from inventory labels. Each service retains detail from every monitoring location. Any fresh failure makes the combined state down; online requires fresh confirmation from every location. Old or missing results are unknown rather than outdated healthy or down states.
 
 The page itself is entirely static, so it can live on a CDN or any static hosting service. There’s no central application server or separate database to maintain.
 

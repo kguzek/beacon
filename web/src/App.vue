@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, markRaw, onMounted, onUnmounted, ref } from "vue";
+import * as z from "zod";
 import {
   currentSchema,
   effectiveStatus,
@@ -8,9 +9,23 @@ import {
   historySchema,
   settingsSchema,
   visibleInventory,
+  healthSummary,
+  filterServices,
+  serviceGroups,
 } from "./api";
 import type { Observer, Observation } from "./api";
 import HistoryBar from "./HistoryBar.vue";
+import StateTooltip from "./StateTooltip.vue";
+import { useServicePlaceholder } from "./use-service-placeholder";
+import { useLocalStorage } from "./use-local-storage";
+import {
+  combinedDescriptions,
+  groupDescriptions,
+  healthStates,
+  monitorDescriptions,
+  overviewDescriptions,
+  serviceDescriptions,
+} from "./status";
 
 const title = ref("Service status");
 const observers = ref<Observer[]>([]);
@@ -23,6 +38,63 @@ const periods = [
   { id: "month", label: "30 days" },
 ] as const;
 const inventory = computed(() => visibleInventory(observers.value));
+const summary = computed(() =>
+  healthSummary(inventory.value, observers.value, now.value),
+);
+const query = ref("");
+const reducedMotion = ref(false);
+const serviceNames = computed(() =>
+  inventory.value.map((service) => service.name),
+);
+const animatePlaceholder = computed(
+  () => !reducedMotion.value && query.value.length === 0,
+);
+const { placeholder: searchPlaceholder, phase: placeholderPhase } =
+  useServicePlaceholder(serviceNames, animatePlaceholder);
+let motionPreference: MediaQueryList | undefined;
+function updateMotionPreference() {
+  reducedMotion.value = motionPreference?.matches ?? false;
+}
+const searchInput = ref<HTMLInputElement | null>(null);
+const searching = computed(() => query.value.trim().length > 0);
+const filtered = computed(() => filterServices(inventory.value, query.value));
+const organization = computed(() => {
+  const result = serviceGroups(inventory.value, query.value);
+  return {
+    ...result,
+    groups: result.groups.map((group) => ({
+      ...group,
+      summary: healthSummary(group.services, observers.value, now.value),
+    })),
+  };
+});
+const collapsed = useLocalStorage(
+  "beacon:collapsed-groups",
+  () => [] as string[],
+  z.array(z.string()),
+);
+function expanded(id: string) {
+  return searching.value || !collapsed.value.includes(id);
+}
+function toggleGroup(id: string) {
+  if (searching.value) return;
+  collapsed.value = collapsed.value.includes(id)
+    ? collapsed.value.filter((groupId) => groupId !== id)
+    : [...collapsed.value, id];
+}
+function searchShortcut(event: KeyboardEvent) {
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === "k" &&
+    searchInput.value
+  ) {
+    event.preventDefault();
+    searchInput.value.focus();
+    searchInput.value.select();
+  }
+}
 const catastrophic = computed(
   () =>
     observers.value.length > 0 &&
@@ -112,6 +184,10 @@ function tick() {
   schedule(tick, 1000);
 }
 onMounted(async () => {
+  motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+  updateMotionPreference();
+  motionPreference.addEventListener("change", updateMotionPreference);
+  document.addEventListener("keydown", searchShortcut);
   tick();
   try {
     const settings = await fetchJson(
@@ -136,6 +212,8 @@ onMounted(async () => {
   }
 });
 onUnmounted(() => {
+  motionPreference?.removeEventListener("change", updateMotionPreference);
+  document.removeEventListener("keydown", searchShortcut);
   stopped = true;
   for (const timer of timers) clearTimeout(timer);
 });
@@ -158,17 +236,47 @@ onUnmounted(() => {
         <h2>Service status unavailable</h2>
         <p>We couldn’t load this page. Please try again later.</p>
       </section>
-      <section v-else-if="catastrophic" class="notice danger" role="alert">
-        <h2>Service status unavailable</h2>
-        <p>We can’t reach our monitoring locations.</p>
-      </section>
-      <section v-else class="notice">
+      <section
+        v-else
+        class="notice overview"
+        :class="{
+          danger: !loading && summary.down > 0,
+          neutral: loading || (summary.unknown > 0 && summary.down === 0),
+        }"
+        aria-label="Service health overview"
+      >
         <span class="signal">◉</span>
         <div>
           <h2>
-            {{ loading ? "Checking service status…" : "Monitoring is online" }}
+            <StateTooltip
+              :description="
+                overviewDescriptions[
+                  loading ? 'Checking service status…' : summary.headline
+                ] ?? ''
+              "
+            >
+              {{ loading ? "Checking service status…" : summary.headline }}
+            </StateTooltip>
           </h2>
+          <p v-if="!loading" class="breakdown">
+            <template v-for="(state, index) in healthStates" :key="state.id">
+              <span v-if="index" aria-hidden="true"> · </span>
+              <StateTooltip :description="combinedDescriptions[state.id]"
+                >{{ summary[state.id] }} {{ state.label }}</StateTooltip
+              >
+            </template>
+          </p>
+          <p v-if="!loading && summary.down > 0">
+            Availability may vary by location.
+          </p>
         </div>
+      </section>
+      <section
+        v-if="!configError && catastrophic"
+        class="notice danger monitoring-alert"
+        role="alert"
+      >
+        <h2>Status updates are temporarily unavailable.</h2>
       </section>
       <ul class="server-list" aria-label="Monitoring servers">
         <li v-for="observer in observers" :key="observer.config.id">
@@ -185,8 +293,15 @@ onUnmounted(() => {
             >{{ observer.loading ? "◌" : observer.reachable ? "✓" : "×" }}</span
           >
           <span>{{ observer.config.name }}</span>
-          <span
+          <StateTooltip
             class="pill"
+            :description="
+              observer.loading
+                ? monitorDescriptions.connecting
+                : observer.reachable
+                  ? monitorDescriptions.reachable
+                  : monitorDescriptions.unreachable
+            "
             :class="
               observer.loading
                 ? 'unknown'
@@ -198,9 +313,9 @@ onUnmounted(() => {
               observer.loading
                 ? "Connecting"
                 : observer.reachable
-                  ? "Online"
-                  : "Offline"
-            }}</span
+                  ? "Reachable"
+                  : "Unreachable"
+            }}</StateTooltip
           >
         </li>
       </ul>
@@ -220,80 +335,236 @@ onUnmounted(() => {
           </button>
         </div>
       </div>
-      <section v-for="service in inventory" :key="service.id" class="service">
-        <div class="service-header">
-          <div>
-            <h3>{{ service.name }}</h3>
-            <span class="hostname"
-              >{{ service.id
-              }}<span v-if="service.hosting_location">
-                · hosted at {{ service.hosting_location }}</span
-              ></span
+      <div class="search-services">
+        <label for="service-search">Search services</label>
+        <div class="search-controls">
+          <div class="search-input">
+            <input
+              id="service-search"
+              ref="searchInput"
+              v-model="query"
+              :placeholder="searchPlaceholder"
+              type="search"
+              aria-keyshortcuts="Control+k Meta+k"
+              @keydown.esc="query = ''"
+            />
+            <span v-if="!query" class="search-placeholder" aria-hidden="true">
+              <span class="placeholder-text">{{ searchPlaceholder }}</span
+              ><span
+                class="placeholder-caret"
+                :class="{ 'is-deleting': placeholderPhase === 'deleting' }"
+              ></span>
+            </span>
+          </div>
+          <kbd>Ctrl/⌘+K</kbd>
+          <button
+            v-if="query"
+            class="clear-search"
+            type="button"
+            @click="
+              query = '';
+              searchInput?.focus();
+            "
+          >
+            Clear search
+          </button>
+        </div>
+      </div>
+      <p v-if="searching" class="search-count" role="status">
+        {{ filtered.length }} of {{ inventory.length }} services
+      </p>
+      <div
+        v-for="(group, index) in organization.groups"
+        :key="group.id"
+        :class="{ 'service-group': organization.grouped }"
+      >
+        <div v-if="organization.grouped" class="group-header">
+          <h3 class="group-heading">
+            <button
+              type="button"
+              :aria-expanded="expanded(group.id)"
+              :aria-controls="`group-${index}`"
+              :aria-disabled="searching || undefined"
+              @click="toggleGroup(group.id)"
             >
+              <span
+                ><span
+                  class="group-chevron"
+                  :class="{ collapsed: !expanded(group.id) }"
+                  aria-hidden="true"
+                  >▾</span
+                >
+                {{ group.name }}
+                <span class="group-count"
+                  >({{
+                    searching
+                      ? `${group.matches.length} matches / ${group.services.length} services`
+                      : group.services.length
+                  }})</span
+                ></span
+              >
+            </button>
+          </h3>
+          <div class="group-summary" aria-label="Group health">
+            <StateTooltip
+              v-if="group.summary.healthy === group.services.length"
+              class="group-state healthy"
+              :description="`${group.summary.breakdown}. ${groupDescriptions.healthy}`"
+              >All online</StateTooltip
+            >
+            <template
+              v-else
+              v-for="state in healthStates.filter(
+                (state) => state.id !== 'healthy',
+              )"
+              :key="state.id"
+            >
+              <StateTooltip
+                v-if="group.summary[state.id] > 0"
+                class="group-state"
+                :class="state.id"
+                :description="`${group.summary.breakdown}. ${groupDescriptions[state.id]}`"
+                >{{ group.summary[state.id] }} {{ state.label }}</StateTooltip
+              >
+            </template>
           </div>
         </div>
-        <article
-          v-for="observer in observers"
-          :key="observer.config.id"
-          class="observer-row"
-        >
-          <div class="service-top">
-            <div class="service-title">
-              <span class="dot" :class="status(observer, service)"></span>
-              <div>
-                <h4>{{ observer.config.name }}</h4>
+        <div :id="`group-${index}`">
+          <Transition
+            name="group-collapse"
+            :css="organization.grouped"
+            @before-enter="(element) => element.removeAttribute('inert')"
+            @before-leave="(element) => element.setAttribute('inert', '')"
+          >
+            <div
+              v-if="!organization.grouped || expanded(group.id)"
+              :class="{ 'group-collapse': organization.grouped }"
+            >
+              <div :class="{ 'group-collapse-inner': organization.grouped }">
+                <div :class="{ 'group-content': organization.grouped }">
+                  <section
+                    v-for="service in group.matches"
+                    :key="service.id"
+                    class="service"
+                  >
+                    <div class="service-header">
+                      <div>
+                        <h3>{{ service.name }}</h3>
+                        <span class="hostname">
+                          <a
+                            :href="`https://${service.id}`"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            >{{ service.id }}</a
+                          ><span v-if="service.hosting_location">
+                            · hosted at {{ service.hosting_location }}</span
+                          >
+                        </span>
+                      </div>
+                    </div>
+                    <article
+                      v-for="observer in observers"
+                      :key="observer.config.id"
+                      class="observer-row"
+                    >
+                      <div class="service-top">
+                        <div class="service-title">
+                          <span
+                            class="dot"
+                            :class="status(observer, service)"
+                          ></span>
+                          <div>
+                            <h4>{{ observer.config.name }}</h4>
+                          </div>
+                        </div>
+                        <StateTooltip
+                          class="state"
+                          :class="status(observer, service)"
+                          :description="
+                            serviceDescriptions[status(observer, service)]
+                          "
+                          >{{ status(observer, service) }}</StateTooltip
+                        >
+                      </div>
+                      <p
+                        v-if="!observer.reachable && !observer.loading"
+                        class="observer-warning"
+                      >
+                        Updates are temporarily unavailable.
+                      </p>
+                      <p
+                        v-else-if="
+                          observer.current && now >= observer.current.expires_at
+                        "
+                        class="observer-warning"
+                      >
+                        Waiting for a status update.
+                      </p>
+                      <div class="service-detail">
+                        <span
+                          >{{
+                            lastChecked(
+                              observation(observer, service.id)?.observed_at,
+                            )
+                          }}<template
+                            v-if="
+                              status(observer, service) !== 'unknown' &&
+                              observation(observer, service.id)
+                                ?.duration_seconds != null
+                            "
+                          >
+                            ·
+                            {{
+                              (
+                                (observation(observer, service.id)
+                                  ?.duration_seconds ?? 0) * 1000
+                              ).toFixed(0)
+                            }}
+                            ms check time</template
+                          ></span
+                        ><span
+                          >Success rate
+                          <b>{{
+                            percent(
+                              history(observer, service.id)
+                                ?.observed_success_ratio,
+                            )
+                          }}</b>
+                          · checks received
+                          {{
+                            percent(history(observer, service.id)?.coverage)
+                          }}</span
+                        >
+                      </div>
+                      <HistoryBar
+                        :buckets="history(observer, service.id)?.buckets"
+                        :bucket-seconds="observer[period]?.bucket_seconds ?? 0"
+                        :label="`${service.name} · ${observer.config.name}`"
+                      />
+                    </article>
+                  </section>
+                </div>
               </div>
             </div>
-            <span class="state" :class="status(observer, service)">{{
-              status(observer, service)
-            }}</span>
-          </div>
-          <p
-            v-if="!observer.reachable && !observer.loading"
-            class="observer-warning"
-          >
-            Publisher unreachable: service status unknown.
-          </p>
-          <p
-            v-else-if="observer.current && now >= observer.current.expires_at"
-            class="observer-warning"
-          >
-            Status out of date. Waiting for an update.
-          </p>
-          <div class="service-detail">
-            <span
-              >{{ lastChecked(observation(observer, service.id)?.observed_at)
-              }}<template
-                v-if="
-                  status(observer, service) !== 'unknown' &&
-                  observation(observer, service.id)?.duration_seconds != null
-                "
-              >
-                ·
-                {{
-                  (
-                    (observation(observer, service.id)?.duration_seconds ?? 0) *
-                    1000
-                  ).toFixed(0)
-                }}
-                ms check time</template
-              ></span
-            ><span
-              >Success rate
-              <b>{{
-                percent(history(observer, service.id)?.observed_success_ratio)
-              }}</b>
-              · checks received
-              {{ percent(history(observer, service.id)?.coverage) }}</span
-            >
-          </div>
-          <HistoryBar
-            :buckets="history(observer, service.id)?.buckets"
-            :bucket-seconds="observer[period]?.bucket_seconds ?? 0"
-            :label="`${service.name} · ${observer.config.name}`"
-          />
-        </article>
-      </section>
+          </Transition>
+        </div>
+      </div>
+      <div
+        v-if="searching && inventory.length && !filtered.length"
+        class="empty"
+      >
+        <p>No services match ‘{{ query.trim() }}’.</p>
+        <button
+          class="clear-search"
+          type="button"
+          @click="
+            query = '';
+            searchInput?.focus();
+          "
+        >
+          Clear search
+        </button>
+      </div>
       <p v-if="!inventory.length && !configError" class="empty">
         {{
           loading ? "Checking services…" : "No service information available."
@@ -301,11 +572,12 @@ onUnmounted(() => {
       </p>
     </main>
     <footer>
-      <span
+      <span class="footer-tagline"
         ><a class="footer-brand" href="https://git.guzek.uk/kguzek/beacon"
           >beacon</a
         >
-        · Public status, private monitoring.</span
+        <span aria-hidden="true">·</span
+        ><span>Public status, private monitoring.</span></span
       >
       <span class="copyright"
         >© 2026

@@ -2,6 +2,12 @@
 import { computed, onUnmounted, ref, shallowRef, useId, watch } from "vue";
 import type { History } from "./api";
 
+const stateDescriptions = {
+  healthy: "All checks received during this period found the service working.",
+  down: "At least one check during this period found a problem.",
+  unknown: "Too few checks were received to describe this period reliably.",
+};
+
 type Bucket = History["services"][number]["buckets"][number];
 const props = defineProps<{
   buckets: Bucket[] | undefined;
@@ -101,39 +107,44 @@ function percent(value: number | null) {
     <span v-if="!displayed" class="no-history">History unavailable</span>
   </div>
   <Teleport to="body">
-    <div
-      v-if="tooltip"
-      :id="tooltipId"
-      role="tooltip"
-      class="history-tooltip"
-      :style="{ left: `${tooltip.left}px`, top: `${tooltip.top}px` }"
-    >
-      <strong>{{ label }}</strong>
-      <div class="tooltip-date">
-        {{ date(tooltip.bucket.ends_at - displayedBucketSeconds) }}<br />–
-        {{ date(tooltip.bucket.ends_at) }}
+    <Transition name="tooltip-fade">
+      <div
+        v-if="tooltip"
+        :id="tooltipId"
+        role="tooltip"
+        class="history-tooltip"
+        :style="{ left: `${tooltip.left}px`, top: `${tooltip.top}px` }"
+      >
+        <strong>{{ label }}</strong>
+        <div class="tooltip-date">
+          {{ date(tooltip.bucket.ends_at - displayedBucketSeconds) }}<br />–
+          {{ date(tooltip.bucket.ends_at) }}
+        </div>
+        <dl>
+          <div>
+            <dt>Check state</dt>
+            <dd :class="state(tooltip.bucket)">{{ state(tooltip.bucket) }}</dd>
+          </div>
+          <div>
+            <dt>Last HTTP status code</dt>
+            <dd>{{ tooltip.bucket.last_http_status_code ?? "Unavailable" }}</dd>
+          </div>
+          <div>
+            <dt>Success rate</dt>
+            <dd>{{ percent(tooltip.bucket.observed_success_ratio) }}</dd>
+          </div>
+          <div>
+            <dt>Checks received</dt>
+            <dd>
+              {{ tooltip.bucket.samples }} ·
+              {{ percent(tooltip.bucket.coverage) }}
+            </dd>
+          </div>
+        </dl>
+        <p class="tooltip-explanation">
+          {{ stateDescriptions[state(tooltip.bucket)] }}
+        </p>
       </div>
-      <dl>
-        <div>
-          <dt>Check state</dt>
-          <dd :class="state(tooltip.bucket)">{{ state(tooltip.bucket) }}</dd>
-        </div>
-        <div>
-          <dt>Last HTTP status code</dt>
-          <dd>{{ tooltip.bucket.last_http_status_code ?? "Unavailable" }}</dd>
-        </div>
-        <div>
-          <dt>Success rate</dt>
-          <dd>{{ percent(tooltip.bucket.observed_success_ratio) }}</dd>
-        </div>
-        <div>
-          <dt>Checks received</dt>
-          <dd>
-            {{ tooltip.bucket.samples }} ·
-            {{ percent(tooltip.bucket.coverage) }}
-          </dd>
-        </div>
-      </dl>
-    </div>
+    </Transition>
   </Teleport>
 </template>

@@ -60,6 +60,22 @@
               "null"
             ]
           },
+          "labels": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^\\P{Cc}*$"
+            },
+            "maxProperties": 16
+          },
           "observed_success_ratio": {
             "anyOf": [
               {

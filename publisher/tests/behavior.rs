@@ -24,7 +24,7 @@ use tower::ServiceExt;
 fn yaml() -> &'static str {
     r#"
 - targets: ["https://example.org/private?token=secret"]
-  labels: {service: "Example", secret_label: "never-public"}
+  labels: {service: "Example", secret_label: "never-public", beacon_label_group: " Websites "}
 - targets: ["https://hidden.example.org"]
   labels: {service: "Hidden", beacon_hidden: "true"}
 - targets: ["https://private.example.org"]
@@ -40,6 +40,7 @@ fn inventory_contract() {
     let services = inventory(yaml()).unwrap();
     assert_eq!(services.len(), 2);
     assert_eq!(services[0].id, "example.org");
+    assert_eq!(services[0].labels.get("group").unwrap(), "Websites");
     assert!(services[1].hidden);
     let public = serde_json::to_string(&services).unwrap();
     for private in [
@@ -64,6 +65,39 @@ fn inventory_contract() {
         inventory("- targets: [https://EXAMPLE.org]\n  labels: {service: X}").unwrap()[0].id,
         "example.org"
     );
+}
+
+#[test]
+fn public_inventory_labels() {
+    let valid = inventory("- targets: [https://a.test, https://b.test]\n  labels: {service: X, beacon_label_group: ' Observability ', beacon_label_team: 'Ops'}").unwrap();
+    assert_eq!(valid[0].labels, valid[1].labels);
+    assert_eq!(valid[0].labels["group"], "Observability");
+    for labels in [
+        "beacon_label_group: ''".to_owned(),
+        "beacon_label_group: '   '".to_owned(),
+        "beacon_label_Group: X".to_owned(),
+        "beacon_label_: X".to_owned(),
+        "beacon_label_1group: X".to_owned(),
+        "beacon_label_bad-key: X".to_owned(),
+        format!("beacon_label_{}: X", "a".repeat(33)),
+        format!("beacon_label_group: '{}'", "é".repeat(101)),
+        r#"beacon_label_group: "a\nb""#.to_owned(),
+        "'beacon_label_group ': X, beacon_label_group: Y".to_owned(),
+        (0..17)
+            .map(|i| format!("beacon_label_key{i}: X"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    ] {
+        let yaml = format!("- targets: [https://a.test]\n  labels: {{service: X, {labels}}}");
+        assert!(inventory(&yaml).is_err(), "{yaml}");
+    }
+    let boundary = inventory(&format!(
+        "- targets: [https://a.test]\n  labels: {{service: X, beacon_label_{}: '{}'}}",
+        "a".repeat(32),
+        "é".repeat(100)
+    ))
+    .unwrap();
+    assert_eq!(boundary[0].labels.len(), 1);
 }
 
 #[test]
@@ -303,6 +337,10 @@ async fn current_missing_failed_stale_and_sanitized() {
         let bytes = upstream.current(10000.0).await.unwrap();
         let result: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result["services"][0]["status"], expected);
+        assert_eq!(
+            result["services"][0]["labels"],
+            json!({"group": "Websites"})
+        );
         assert_eq!(result["services"][1]["status"], "unknown");
         assert_eq!(result["services"].as_array().unwrap().len(), 2);
         if mode == 0 {
@@ -333,6 +371,7 @@ async fn history_coverage_and_fixed_buckets() {
             assert_eq!(value["bucket_seconds"], 30);
         }
         assert_eq!(value["services"][0]["observed_success_ratio"], 0.5);
+        assert_eq!(value["services"][0]["labels"], json!({"group": "Websites"}));
         assert_eq!(
             value["services"][0]["buckets"].as_array().unwrap().len(),
             buckets

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::Path,
 };
 use url::Url;
@@ -95,6 +95,7 @@ pub struct Service {
     pub name: String,
     pub hidden: bool,
     pub hosting_location: Option<String>,
+    pub labels: BTreeMap<String, String>,
     #[serde(skip)]
     pub target: String,
 }
@@ -125,6 +126,28 @@ pub fn inventory(yaml: &str) -> Result<Vec<Service>> {
         let publish = flag(&group.labels, "beacon_publish", true)?;
         let hidden = flag(&group.labels, "beacon_hidden", false)?;
         ensure!(!group.targets.is_empty(), "empty target group");
+        let mut labels = BTreeMap::new();
+        for (key, value) in &group.labels {
+            if let Some(key) = key.strip_prefix("beacon_label_") {
+                let key = key.trim();
+                let value = value.trim();
+                ensure!(
+                    !key.is_empty()
+                        && key.len() <= 32
+                        && key.as_bytes()[0].is_ascii_lowercase()
+                        && key
+                            .bytes()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_'),
+                    "invalid public label key"
+                );
+                ensure!(text(value), "invalid public label value");
+                ensure!(
+                    labels.insert(key.to_owned(), value.to_owned()).is_none(),
+                    "duplicate public label key"
+                );
+            }
+        }
+        ensure!(labels.len() <= 16, "at most 16 public labels supported");
         for target in group.targets {
             let url = Url::parse(&target).context("invalid inventory target URL")?;
             ensure!(
@@ -152,6 +175,7 @@ pub fn inventory(yaml: &str) -> Result<Vec<Service>> {
                 name,
                 hidden,
                 hosting_location,
+                labels: labels.clone(),
                 target,
             });
         }

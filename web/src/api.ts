@@ -2,11 +2,35 @@ import * as z from "zod";
 
 const timeSchema = z.number().nonnegative();
 const ratioSchema = z.number().min(0).max(1);
+const labelsSchema = z
+  .record(
+    z
+      .string()
+      .min(1)
+      .max(32)
+      .regex(/^[a-z][a-z0-9_]*$/),
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
+      .regex(/^\P{Cc}*$/u)
+      .refine(
+        (value) => new TextEncoder().encode(value).length <= 200,
+        "Public label values must not exceed 200 UTF-8 bytes",
+      ),
+  )
+  .refine(
+    (labels) => Object.keys(labels).length <= 16,
+    "At most 16 public labels are supported",
+  )
+  .meta({ maxProperties: 16 });
 const serviceSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   hidden: z.boolean(),
   hosting_location: z.string().nullable(),
+  labels: labelsSchema.optional(),
 });
 const locationSchema = z.object({ id: z.string(), name: z.string() });
 const envelope = {
@@ -133,13 +157,116 @@ export function visibleInventory(observers: Observer[]): Observation[] {
       if (item.hidden) {
         hidden.add(item.id);
       }
-      inventory.set(item.id, item);
+      const existing = inventory.get(item.id);
+      if (existing === undefined) {
+        inventory.set(item.id, { ...item });
+      } else if (
+        existing.labels?.group === undefined &&
+        item.labels?.group !== undefined
+      ) {
+        existing.labels = { ...existing.labels, group: item.labels.group };
+      }
     }
   }
   // Conservative visibility across skew: hidden at any observer means hidden on this page.
   return [...inventory.values()]
     .filter((item) => !hidden.has(item.id))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+}
+export function combinedStatus(
+  id: string,
+  observers: Observer[],
+  now: number,
+): Observation["status"] {
+  const states = observers.map((observer) =>
+    effectiveStatus(
+      observer.current?.services.find((service) => service.id === id),
+      observer.current,
+      now,
+    ),
+  );
+  if (states.includes("down")) {
+    return "down";
+  }
+  return states.length > 0 && states.every((state) => state === "healthy")
+    ? "healthy"
+    : "unknown";
+}
+export function healthSummary(
+  services: Observation[],
+  observers: Observer[],
+  now: number,
+) {
+  const counts = { healthy: 0, down: 0, unknown: 0 };
+  for (const service of services) {
+    counts[combinedStatus(service.id, observers, now)]++;
+  }
+  const total = services.length;
+  const headline =
+    total === 0 || counts.unknown === total
+      ? "Service status unavailable"
+      : counts.healthy === total
+        ? "All services online"
+        : counts.down === total
+          ? "All services down"
+          : counts.down > 0
+            ? "Partial outage"
+            : "Service status incomplete";
+  return {
+    ...counts,
+    headline,
+    breakdown: `${String(counts.healthy)} online · ${String(counts.down)} down · ${String(counts.unknown)} unknown`,
+  };
+}
+export function filterServices(services: Observation[], query: string) {
+  const normalized = query.trim().toLowerCase();
+  return services.filter(
+    (service) =>
+      service.name.toLowerCase().includes(normalized) ||
+      service.id.toLowerCase().includes(normalized),
+  );
+}
+export function serviceGroups(services: Observation[], query: string) {
+  const isGrouped = services.some(
+    (service) => service.labels?.group !== undefined,
+  );
+  const groups = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      services: Observation[];
+      matches: Observation[];
+    }
+  >();
+  const matches = new Set(
+    filterServices(services, query).map((service) => service.id),
+  );
+  for (const service of services) {
+    const name = isGrouped ? service.labels?.group : undefined;
+    const id = name === undefined ? "fallback" : `named:${name}`;
+    let group = groups.get(id);
+    if (group === undefined) {
+      group = { id, name: name ?? "Other services", services: [], matches: [] };
+      groups.set(id, group);
+    }
+    group.services.push(service);
+    if (matches.has(service.id)) {
+      group.matches.push(service);
+    }
+  }
+  return {
+    grouped: isGrouped,
+    groups: [...groups.values()]
+      .filter((group) => group.matches.length > 0)
+      .sort((a, b) =>
+        a.id === "fallback"
+          ? 1
+          : b.id === "fallback"
+            ? -1
+            : a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+      ),
+  };
 }
 export async function fetchJson<T>(
   url: string,
