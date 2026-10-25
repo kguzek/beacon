@@ -101,6 +101,32 @@ fn public_inventory_labels() {
 }
 
 #[test]
+fn vpn_inventory_flag() {
+    for (label, expected) in [
+        ("", false),
+        (", beacon_requires_vpn: 'false'", false),
+        (", beacon_requires_vpn: 'true'", true),
+    ] {
+        let services = inventory(&format!(
+            "- targets: [https://a.test, https://b.test]\n  labels: {{service: X{label}}}"
+        ))
+        .unwrap();
+        assert_eq!(services.len(), 2);
+        for service in services {
+            assert_eq!(service.requires_vpn, expected);
+            assert!(!service.hidden);
+            assert_eq!(
+                serde_json::to_value(&service).unwrap()["requires_vpn"],
+                expected
+            );
+        }
+    }
+    for value in ["yes", "TRUE", "1", "''"] {
+        assert!(inventory(&format!("- targets: [https://a.test]\n  labels: {{service: X, beacon_requires_vpn: {value}}}")).is_err());
+    }
+}
+
+#[test]
 fn startup_only_and_required_files() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");

@@ -54,6 +54,9 @@
           "hidden": {
             "type": "boolean"
           },
+          "requires_vpn": {
+            "type": "boolean"
+          },
           "hosting_location": {
             "type": [
               "string",

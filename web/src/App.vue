@@ -10,6 +10,7 @@ import {
   settingsSchema,
   visibleInventory,
   healthSummary,
+  healthStates,
   filterServices,
   serviceGroups,
 } from "./api";
@@ -22,7 +23,6 @@ import { SnapshotPollSchedule } from "./polling";
 import {
   combinedDescriptions,
   groupDescriptions,
-  healthStates,
   monitorDescriptions,
   overviewDescriptions,
   serviceDescriptions,
@@ -267,7 +267,9 @@ onUnmounted(() => {
             >
               <span v-if="index" aria-hidden="true"> · </span>
               <StateTooltip
-                :description="`${summary.descriptions[state.id]} ${combinedDescriptions[state.id]}`.trim()"
+                :description="
+                  `${summary.descriptions[state.id]} ${combinedDescriptions[state.id]}`.trim()
+                "
                 >{{ summary[state.id] }} {{ state.label }}</StateTooltip
               >
             </template>
@@ -455,7 +457,31 @@ onUnmounted(() => {
                   >
                     <div class="service-header">
                       <div>
-                        <h3>{{ service.name }}</h3>
+                        <h3 class="service-name">
+                          {{ service.name }}
+                          <StateTooltip
+                            v-if="service.requires_vpn"
+                            class="vpn-badge"
+                            description="VPN required to access this service."
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.8"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6Z" />
+                              <rect x="9" y="11" width="6" height="5" rx="1" />
+                              <path d="M10 11V9a2 2 0 0 1 4 0v2" />
+                            </svg>
+                            VPN
+                          </StateTooltip>
+                        </h3>
                         <span class="hostname">
                           <a
                             :href="`https://${service.id}`"

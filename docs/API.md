@@ -56,11 +56,12 @@ Quote boolean values in YAML: use `"false"`, not `false`. All inventory label va
 | `service` | `service: "Grafana"` | Required for published targets | Sets the public display name. |
 | `beacon_publish` | `beacon_publish: "false"` | `"true"` | Excludes the target from **all API responses** and the page. |
 | `beacon_hidden` | `beacon_hidden: "true"` | `"false"` | Keeps the service in the API but hides it from the page, search and summaries. |
+| `beacon_requires_vpn` | `beacon_requires_vpn: "true"` | `"false"` | Keeps the service visible and adds a shield-lock VPN badge beside its name. Publishes the boolean `requires_vpn` in current and history responses; does not change health calculations or enforce access restrictions. |
 | `beacon_hosting_location` | `beacon_hosting_location: "primary"` | Absent | Adds a public “hosted at” description. It does not choose which observers monitor the service or how it is grouped. |
 | `beacon_label_group` | `beacon_label_group: "Observability"` | Absent | Places the service in a named, collapsible group on the page. |
 | `beacon_label_<key>` | `beacon_label_team: "Platform"` | Absent | Publishes additional organizational metadata under `labels`, without the `beacon_label_` prefix. Only `group` currently affects page organization. |
 
-`beacon_publish` and `beacon_hidden` accept only the exact strings `"true"` and `"false"`. Publication opt-out takes precedence over page visibility.
+`beacon_publish`, `beacon_hidden` and `beacon_requires_vpn` accept only the exact strings `"true"` and `"false"`. Publication opt-out takes precedence over page visibility. Older publishers may omit `requires_vpn`; the browser treats it as false. If any observer marks a service as requiring VPN, the page shows the badge.
 
 Display names and hosting-location values must be nonempty, contain no control characters and fit within 200 UTF-8 bytes.
 

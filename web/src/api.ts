@@ -1,7 +1,5 @@
 import * as z from "zod";
 
-import { describeServices, healthStates } from "./status";
-
 const timeSchema = z.number().nonnegative();
 const ratioSchema = z.number().min(0).max(1);
 const labelsSchema = z
@@ -31,6 +29,7 @@ const serviceSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   hidden: z.boolean(),
+  requires_vpn: z.boolean().optional(),
   hosting_location: z.string().nullable(),
   labels: labelsSchema.optional(),
 });
@@ -160,6 +159,9 @@ export function visibleInventory(observers: Observer[]): Observation[] {
         hidden.add(item.id);
       }
       const existing = inventory.get(item.id);
+      if (existing !== undefined && item.requires_vpn === true) {
+        existing.requires_vpn = true;
+      }
       if (existing === undefined) {
         inventory.set(item.id, { ...item });
       } else if (
@@ -194,6 +196,33 @@ export function combinedStatus(
     ? "healthy"
     : "unknown";
 }
+export const healthStates = [
+  { id: "healthy", label: "online" },
+  { id: "down", label: "down" },
+  { id: "unknown", label: "unknown" },
+] as const;
+
+function describeServices(
+  names: string[],
+  state: (typeof healthStates)[number]["id"],
+) {
+  if (names.length === 0) {
+    return "";
+  }
+  if (state === "healthy") {
+    return "";
+  }
+  const list = new Intl.ListFormat("en", {
+    style: "long",
+    type: "conjunction",
+  }).format(names);
+  const subject = `${names.length === 1 ? "Service" : "Services"} ${list}`;
+  const verb = names.length === 1 ? "is" : "are";
+  return state === "unknown"
+    ? `${subject} ${names.length === 1 ? "has an unknown status" : "have an unknown status"}.`
+    : `${subject} ${verb} currently down.`;
+}
+
 export function healthSummary(
   services: Observation[],
   observers: Observer[],

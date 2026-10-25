@@ -54,6 +54,25 @@ function observer(id: string, current: Current | null): Observer {
   };
 }
 describe("public contract and presentation", () => {
+  it("validates VPN metadata and retains the badge across observer skew without hiding services", () => {
+    const legacy = snapshot();
+    expect(currentSchema.safeParse(legacy).success).toBe(true);
+    const vpn = snapshot("secondary");
+    vpn.services[0]!.requires_vpn = true;
+    expect(currentSchema.parse(vpn).services[0]!.requires_vpn).toBe(true);
+    expect(
+      currentSchema.safeParse({
+        ...vpn,
+        services: [{ ...vpn.services[0], requires_vpn: "true" }],
+      }).success,
+    ).toBe(false);
+    const observers = [observer("primary", legacy), observer("secondary", vpn)];
+    for (const order of [observers, [...observers].reverse()]) {
+      expect(visibleInventory(order)).toHaveLength(1);
+      expect(visibleInventory(order)[0]!.requires_vpn).toBe(true);
+      expect(combinedStatus("example.org", order, 150)).toBe("healthy");
+    }
+  });
   it("supports legacy metadata and validates bounded public labels in both contracts", () => {
     const value = snapshot();
     for (const labels of [{ group: " Observability " }, {}, undefined]) {

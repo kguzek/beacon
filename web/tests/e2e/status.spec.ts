@@ -1,5 +1,65 @@
 import { expect, test } from "@playwright/test";
 
+test("VPN services remain listed with a shield badge and accessible explanation", async ({
+  page,
+}) => {
+  await page.route("**/locations.json", async (route) =>
+    route.fulfill({
+      json: {
+        locations: [
+          { id: "primary", name: "Primary", url: "https://primary.test" },
+        ],
+      },
+    }),
+  );
+  await page.route("https://primary.test/**", async (route) => {
+    const now = Date.now() / 1000;
+    return route.fulfill({
+      json: {
+        schema_version: 1,
+        location: { id: "primary", name: "Primary" },
+        generated_at: now,
+        expires_at: now + 3600,
+        window_seconds: 3600,
+        bucket_seconds: 30,
+        services: [true, false, undefined].map((requires_vpn, index) => ({
+          id: `service-${String(index)}.test`,
+          name: ["Private service", "Public service", "Legacy service"][index],
+          hidden: false,
+          requires_vpn,
+          hosting_location: null,
+          status: "healthy",
+          observed_at: now,
+          expires_at: now + 3600,
+          duration_seconds: null,
+          observed_success_ratio: null,
+          coverage: 0,
+          buckets: [],
+        })),
+      },
+    });
+  });
+  await page.goto("/");
+  await expect(page.locator(".service")).toHaveCount(3);
+  const badge = page.locator(".vpn-badge");
+  await expect(badge).toHaveCount(1);
+  await expect(badge.locator("svg")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Private service VPN" }),
+  ).toBeVisible();
+  await badge.focus();
+  await expect(page.getByRole("tooltip")).toHaveText(
+    "VPN required to access this service.",
+  );
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await page
+    .getByRole("searchbox", { name: "Search services" })
+    .fill("Private");
+  await expect(page.locator(".service")).toHaveCount(1);
+  await expect(badge).toBeVisible();
+});
+
 test("search placeholder cycles visible names with a backspacing caret and respects reduced motion", async ({
   page,
 }) => {

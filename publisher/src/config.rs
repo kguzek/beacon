@@ -94,6 +94,7 @@ pub struct Service {
     pub id: String,
     pub name: String,
     pub hidden: bool,
+    pub requires_vpn: bool,
     pub hosting_location: Option<String>,
     pub labels: BTreeMap<String, String>,
     #[serde(skip)]
@@ -125,6 +126,7 @@ pub fn inventory(yaml: &str) -> Result<Vec<Service>> {
     for group in groups {
         let publish = flag(&group.labels, "beacon_publish", true)?;
         let hidden = flag(&group.labels, "beacon_hidden", false)?;
+        let requires_vpn = flag(&group.labels, "beacon_requires_vpn", false)?;
         ensure!(!group.targets.is_empty(), "empty target group");
         let mut labels = BTreeMap::new();
         for (key, value) in &group.labels {
@@ -174,6 +176,7 @@ pub fn inventory(yaml: &str) -> Result<Vec<Service>> {
                 id,
                 name,
                 hidden,
+                requires_vpn,
                 hosting_location,
                 labels: labels.clone(),
                 target,
