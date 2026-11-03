@@ -7,6 +7,9 @@ import {
   filterServices,
   healthSummary,
   historySchema,
+  mergeSegments,
+  normalizeHistory,
+  probeSlots,
   serviceGroups,
   visibleInventory,
 } from "../src/api";
@@ -273,5 +276,186 @@ describe("public contract and presentation", () => {
         observer("secondary", null),
       ]),
     ).toHaveLength(0);
+  });
+});
+
+describe("history snapshots", () => {
+  const service = {
+    id: "example.org",
+    name: "Example",
+    hidden: false,
+    hosting_location: null,
+    observed_success_ratio: 0.5,
+    coverage: 1,
+  };
+  const envelope = {
+    schema_version: 2,
+    location: { id: "primary", name: "Primary" },
+    generated_at: 3600,
+    expires_at: 3700,
+    window_seconds: 3600,
+    scrape_interval_seconds: 15,
+    refresh_seconds: 15,
+  };
+  it("accepts per-probe and timeline histories", () => {
+    const probes = historySchema.parse({
+      ...envelope,
+      kind: "probes",
+      services: [
+        {
+          ...service,
+          probes: [
+            { at: 15, success: true, http_status_code: 200 },
+            { at: 30, success: false, http_status_code: null },
+          ],
+        },
+      ],
+    });
+    expect(normalizeHistory(probes)).toBe(probes);
+    const timeline = historySchema.parse({
+      ...envelope,
+      kind: "timeline",
+      step_seconds: 60,
+      services: [
+        {
+          ...service,
+          segments: [
+            {
+              start: 0,
+              end: 3600,
+              state: "down",
+              samples: 240,
+              failures: 1,
+              last_http_status_code: 503,
+            },
+          ],
+        },
+      ],
+    });
+    expect(normalizeHistory(timeline).kind).toBe("timeline");
+    expect(
+      historySchema.safeParse({
+        ...envelope,
+        kind: "probes",
+        services: [{ ...service, segments: [] }],
+      }).success,
+    ).toBe(false);
+  });
+  it("maps legacy bucket histories onto merged timeline segments", () => {
+    const legacy = historySchema.parse({
+      schema_version: 1,
+      location: { id: "primary", name: "Primary" },
+      generated_at: 120,
+      expires_at: 200,
+      window_seconds: 86_400,
+      bucket_seconds: 30,
+      services: [
+        {
+          ...service,
+          buckets: [
+            {
+              ends_at: 30,
+              observed_success_ratio: 1,
+              coverage: 1,
+              samples: 2,
+              last_http_status_code: 200,
+            },
+            { ends_at: 60, observed_success_ratio: 1, coverage: 1, samples: 2 },
+            {
+              ends_at: 90,
+              observed_success_ratio: 0.5,
+              coverage: 1,
+              samples: 2,
+              last_http_status_code: 503,
+            },
+            {
+              ends_at: 120,
+              observed_success_ratio: null,
+              coverage: 0,
+              samples: 0,
+            },
+          ],
+        },
+      ],
+    });
+    const history = normalizeHistory(legacy);
+    expect(history.kind).toBe("timeline");
+    expect(history.refresh_seconds).toBe(300);
+    const segments = history.services[0]!;
+    expect("segments" in segments && segments.segments).toEqual([
+      {
+        start: 0,
+        end: 60,
+        state: "healthy",
+        samples: 4,
+        failures: 0,
+        last_http_status_code: 200,
+      },
+      {
+        start: 60,
+        end: 90,
+        state: "down",
+        samples: 2,
+        failures: 1,
+        last_http_status_code: 503,
+      },
+      {
+        start: 90,
+        end: 120,
+        state: "unknown",
+        samples: 0,
+        failures: 0,
+        last_http_status_code: null,
+      },
+    ]);
+  });
+  it("never merges segments across a gap", () => {
+    const segment = {
+      state: "healthy" as const,
+      samples: 1,
+      failures: 0,
+      last_http_status_code: null,
+    };
+    expect(
+      mergeSegments([
+        { ...segment, start: 0, end: 10 },
+        { ...segment, start: 20, end: 30 },
+      ]),
+    ).toHaveLength(2);
+  });
+  it("keeps one slot per expected check, marking missed probes", () => {
+    const probe = (at: number) => ({
+      at,
+      success: true,
+      http_status_code: 200,
+    });
+    const all = Array.from({ length: 240 }, (_, index) =>
+      probe(15 * (index + 1)),
+    );
+    expect(probeSlots(all, 0, 3600, 15)).toHaveLength(240);
+    // Small jitter does not invent missed checks.
+    const jittered = all.map((p, index) => ({
+      ...p,
+      at: p.at + (index % 2 ? 2 : -2),
+    }));
+    expect(
+      probeSlots(jittered, 0, 3600, 15).every((slot) => slot.kind === "probe"),
+    ).toBe(true);
+    // Two consecutive scrapes missing in the middle. At the end, a check is
+    // only missed once overdue: one interval of silence is not yet a gap.
+    const lastMissing = all.filter((p) => p.at !== 3600);
+    expect(probeSlots(lastMissing, 0, 3600, 15)).toHaveLength(239);
+    const gappy = all.filter((p) => ![600, 615, 3585, 3600].includes(p.at));
+    const slots = probeSlots(gappy, 0, 3600, 15);
+    expect(slots).toHaveLength(239);
+    expect(
+      slots.filter((slot) => slot.kind === "missed").map((slot) => slot.at),
+    ).toEqual([600, 615, 3585]);
+    // Probes outside the window are ignored; empty history is all missed.
+    expect(
+      probeSlots([probe(0), probe(4000)], 0, 3600, 15).every(
+        (slot) => slot.kind === "missed",
+      ),
+    ).toBe(true);
   });
 });

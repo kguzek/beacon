@@ -127,28 +127,47 @@ pub fn spawn_refreshes(
     snapshots: Arc<RwLock<Snapshots>>,
 ) -> anyhow::Result<Vec<tokio::task::JoinHandle<()>>> {
     let upstream = Arc::new(prometheus::Prometheus::new(config.clone(), services)?);
+    // Detected once and shared; current status never waits for it.
+    let interval = Arc::new(tokio::sync::OnceCell::<u64>::new());
     let mut tasks = vec![];
-    for (kind, seconds) in [
-        (0, config.refresh.current_seconds),
-        (1, config.refresh.day_seconds),
-        (2, config.refresh.month_seconds),
-        (3, config.refresh.hour_seconds),
-    ] {
+    for snapshot in ["current", "hour", "day", "month"] {
         let upstream = upstream.clone();
         let snapshots = snapshots.clone();
+        let interval = interval.clone();
+        let refresh = config.refresh.clone();
         tasks.push(tokio::spawn(async move {
             let mut failures = 0u32;
             let mut health = RefreshHealth::default();
-            let snapshot = match kind {
-                0 => "current",
-                1 => "day",
-                2 => "month",
-                _ => "hour",
-            };
             loop {
-                let result = match kind {
-                    0 => upstream.current(now()).await,
-                    _ => upstream.history(now(), snapshot).await,
+                let mut seconds = match snapshot {
+                    "current" => refresh.current_seconds,
+                    "day" => refresh.day_seconds,
+                    "month" => refresh.month_seconds,
+                    _ => refresh.hour_seconds.unwrap_or(10),
+                };
+                let result = if snapshot == "current" {
+                    upstream.current(now()).await
+                } else {
+                    match interval
+                        .get_or_try_init(|| async {
+                            let detected = upstream.detect_scrape_interval(now()).await?;
+                            tracing::info!(
+                                scrape_interval_seconds = detected,
+                                configured = refresh.scrape_seconds.is_some(),
+                                "scrape interval established"
+                            );
+                            anyhow::Ok(detected)
+                        })
+                        .await
+                    {
+                        Ok(&interval) => {
+                            if snapshot == "hour" {
+                                seconds = refresh.hour_interval(interval);
+                            }
+                            upstream.history(now(), snapshot, interval).await
+                        }
+                        Err(error) => Err(error),
+                    }
                 };
                 let result = result.and_then(|body| {
                     anyhow::ensure!(
@@ -160,10 +179,10 @@ pub fn spawn_refreshes(
                 match result {
                     Ok(body) => {
                         let mut cache = snapshots.write().unwrap();
-                        let slot = match kind {
-                            0 => &mut cache.current,
-                            1 => &mut cache.day,
-                            2 => &mut cache.month,
+                        let slot = match snapshot {
+                            "current" => &mut cache.current,
+                            "day" => &mut cache.day,
+                            "month" => &mut cache.month,
                             _ => &mut cache.hour,
                         };
                         *slot = Some(Bytes::from(body));

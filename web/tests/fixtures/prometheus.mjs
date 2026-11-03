@@ -9,7 +9,12 @@ createServer((request, response) => {
     JSON.stringify({
       status: "success",
       data: {
-        resultType: url.pathname.endsWith("query_range") ? "matrix" : "vector",
+        // Range selectors (e.g. `probe_success{…}[1h]`) return raw samples.
+        resultType:
+          url.pathname.endsWith("query_range") ||
+          /\]$/.test(url.searchParams.get("query") ?? "")
+            ? "matrix"
+            : "vector",
         result: [],
       },
     }),

@@ -199,6 +199,8 @@ test("monitoring failure does not invalidate retained fresh service health", asy
     "We can receive updates from this location.",
   );
   await page.locator(".intro").hover();
+  // Let the fade-out finish before fast-forwarding the fake clock.
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
   isUnreachable = true;
   await page.clock.fastForward(31_000);
   await expect(page.getByRole("alert")).toHaveText(
@@ -495,68 +497,136 @@ test("services group server histories with custom segment tooltips", async ({
     const url = new URL(route.request().url());
     const id = url.hostname.split(".", 1)[0]!;
     const now = Date.now() / 1000;
-    const isMonth = url.pathname.endsWith("month");
-    const isHour = url.pathname.endsWith("hour");
-    const bucketSeconds = isMonth ? 21_600 : isHour ? 30 : 900;
     const service = {
       id: "example.org",
       name: "Example website",
       hidden: false,
       hosting_location: null,
     };
-    return route.fulfill({
-      json: {
-        schema_version: 1,
-        location: { id, name: id },
-        generated_at: now,
-        expires_at: now + 3600,
-        ...(url.pathname.endsWith("current")
-          ? {
-              services: [
-                {
-                  ...service,
-                  status: "healthy",
-                  observed_at: now,
-                  expires_at: now + 3600,
-                  duration_seconds: 0.1,
-                },
-              ],
-            }
-          : {
-              window_seconds: isMonth ? 2_592_000 : isHour ? 3600 : 86_400,
-              bucket_seconds: bucketSeconds,
-              services: [
-                {
-                  ...service,
-                  observed_success_ratio: 0.75,
-                  coverage: 0.8,
-                  buckets: [
-                    {
-                      ends_at: now - 2 * bucketSeconds,
-                      observed_success_ratio: 1,
-                      coverage: 1,
-                      samples: 30,
-                      last_http_status_code: isMonth ? 204 : isHour ? 201 : 200,
-                    },
-                    {
-                      ends_at: now - bucketSeconds,
-                      observed_success_ratio: 0.5,
-                      coverage: 1,
-                      samples: 30,
-                      last_http_status_code: 503,
-                    },
-                    {
-                      ends_at: now,
-                      observed_success_ratio: null,
-                      coverage: 0,
-                      samples: 0,
-                    },
-                  ],
-                },
-              ],
-            }),
-      },
-    });
+    const location = { id, name: id };
+    const summary = { observed_success_ratio: 0.75, coverage: 0.8 };
+    const kind = url.pathname.split("/").at(-1) ?? "";
+    switch (kind) {
+      case "current": {
+        return route.fulfill({
+          json: {
+            schema_version: 1,
+            location,
+            generated_at: now,
+            expires_at: now + 3600,
+            services: [
+              {
+                ...service,
+                status: "healthy",
+                observed_at: now,
+                expires_at: now + 3600,
+                duration_seconds: 0.1,
+              },
+            ],
+          },
+        });
+      }
+      case "hour": {
+        // Probes every 15 minutes: one success, one failure, then one overdue.
+        return route.fulfill({
+          json: {
+            schema_version: 2,
+            kind: "probes",
+            location,
+            generated_at: now,
+            expires_at: now + 3600,
+            window_seconds: 3600,
+            scrape_interval_seconds: 900,
+            refresh_seconds: 900,
+            services: [
+              {
+                ...service,
+                ...summary,
+                probes: [
+                  { at: now - 2700, success: true, http_status_code: 201 },
+                  { at: now - 1800, success: false, http_status_code: 503 },
+                ],
+              },
+            ],
+          },
+        });
+      }
+      case "day": {
+        return route.fulfill({
+          json: {
+            schema_version: 2,
+            kind: "timeline",
+            location,
+            generated_at: now,
+            expires_at: now + 3600,
+            window_seconds: 86_400,
+            scrape_interval_seconds: 15,
+            refresh_seconds: 300,
+            step_seconds: 60,
+            services: [
+              {
+                ...service,
+                ...summary,
+                segments: [
+                  ["healthy", now - 86_400, now - 3600, 0, null],
+                  ["down", now - 3600, now - 1800, 4, 502],
+                  ["unknown", now - 1800, now, 0, null],
+                ].map(([state, start, end, failures, code]) => ({
+                  state,
+                  start,
+                  end,
+                  samples: 120,
+                  failures,
+                  last_http_status_code: code,
+                })),
+              },
+            ],
+          },
+        });
+      }
+      default: {
+        // Older publishers still serve fixed buckets; they render as a timeline.
+        const bucketSeconds = 21_600;
+        return route.fulfill({
+          json: {
+            schema_version: 1,
+            location,
+            generated_at: now,
+            expires_at: now + 3600,
+            window_seconds: 2_592_000,
+            bucket_seconds: bucketSeconds,
+            services: [
+              {
+                ...service,
+                ...summary,
+                buckets: [
+                  {
+                    ends_at: now - 2 * bucketSeconds,
+                    observed_success_ratio: 1,
+                    coverage: 1,
+                    samples: 30,
+                    last_http_status_code: 204,
+                  },
+                  {
+                    ends_at: now - bucketSeconds,
+                    observed_success_ratio: 0.5,
+                    coverage: 1,
+                    samples: 30,
+                    last_http_status_code: 503,
+                  },
+                  {
+                    ends_at: now,
+                    observed_success_ratio: null,
+                    coverage: 0,
+                    samples: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        });
+      }
+    }
   });
   await page.goto("/");
   await expect(page.locator(".service")).toHaveCount(1);
@@ -585,27 +655,92 @@ test("services group server histories with custom segment tooltips", async ({
   await expect(tooltip.locator(".tooltip-date")).toContainText(
     String(new Date().getFullYear()),
   );
-  await expect(tooltip).toContainText("Last HTTP status code201");
+  await expect(tooltip).toContainText("HTTP status code201");
   await expect(tooltip).toContainText("Check statehealthy");
   await segments.nth(1).hover();
-  await expect(tooltip).toContainText("Last HTTP status code503");
+  await expect(tooltip).toContainText("HTTP status code503");
   await expect(tooltip).toContainText("Check statedown");
   await segments.nth(2).hover();
-  await expect(tooltip).toContainText("Last HTTP status codeUnavailable");
-  await expect(tooltip).toContainText("Check stateunknown");
+  await expect(tooltip).toContainText("HTTP status codeUnavailable");
+  await expect(tooltip).toContainText("Check statemissed");
+  await expect(tooltip).toContainText("No result was received");
   await page.getByRole("heading", { name: "Status by service" }).hover();
   await expect(tooltip).toHaveCount(0);
-  await segments.first().focus();
-  await expect(tooltip).toBeVisible();
+  // The strip is one tab stop; arrow keys move between probes.
+  const strip = page.locator(".observer-row").first().locator(".history");
+  await strip.focus();
+  await expect(tooltip).toContainText("Check statemissed");
+  await page.keyboard.press("ArrowLeft");
+  await expect(tooltip).toContainText("Check statedown");
+  await page.keyboard.press("Home");
+  await expect(tooltip).toContainText("Check statehealthy");
   await page.keyboard.press("Escape");
   await expect(tooltip).toHaveCount(0);
   await page.getByRole("button", { name: "24 hours" }).click();
+  await expect(segments).toHaveCount(3);
+  await expect(strip).toHaveClass(/timeline/);
   await segments.first().hover();
-  await expect(tooltip).toContainText("Last HTTP status code200");
+  await expect(tooltip).toContainText("Statehealthy");
+  await expect(tooltip).toContainText("Duration23h");
+  await expect(tooltip).not.toContainText("Last HTTP status code");
+  await segments.nth(1).hover();
+  await expect(tooltip).toContainText("Statedown");
+  await expect(tooltip).toContainText("Duration30m");
+  await expect(tooltip).toContainText("Failed checks4");
+  await expect(tooltip).toContainText("Last HTTP status code502");
+  // Moving between states glides and resizes rather than snapping.
+  await expect(tooltip).toHaveClass(/gliding/);
+  expect(
+    await tooltip.evaluate(
+      (element) => getComputedStyle(element).transitionProperty,
+    ),
+  ).toMatch(/left.*top.*height/);
+  // Once settled, the tooltip sits just above the hovered segment.
+  const segmentBox = (await segments.nth(1).boundingBox())!;
+  await expect
+    .poll(async () => {
+      const box = (await tooltip.boundingBox())!;
+      return Math.round(segmentBox.y - (box.y + box.height));
+    })
+    .toBe(10);
+  // The highlight ring glides with it and settles on the hovered segment.
+  const ring = strip.locator(".history-highlight");
+  await expect(ring).toHaveClass(/visible/);
+  await expect(ring).toHaveClass(/gliding/);
+  expect(
+    await ring.evaluate(
+      (element) => getComputedStyle(element).transitionProperty,
+    ),
+  ).toMatch(/left.*width/);
+  await expect
+    .poll(async () => {
+      const box = (await ring.boundingBox())!;
+      return [Math.round(box.x), Math.round(box.width)];
+    })
+    .toEqual([Math.round(segmentBox.x), Math.round(segmentBox.width)]);
+  // Leaving fades the ring out in place rather than removing it.
+  await page.getByRole("heading", { name: "Status by service" }).hover();
+  await expect(ring).not.toHaveClass(/visible/);
+  await expect(ring).toHaveCount(1);
+  // State-driven styling elsewhere transitions too, e.g. the period buttons.
+  expect(
+    await page
+      .getByRole("button", { name: "24 hours" })
+      .evaluate((element) => getComputedStyle(element).transitionProperty),
+  ).toContain("background-color");
+  await segments.nth(1).hover();
+  // Widths follow duration: 23 hours dwarfs 30 minutes.
+  const [healthy, down] = await Promise.all([
+    segments.nth(0).boundingBox(),
+    segments.nth(1).boundingBox(),
+  ]);
+  expect(healthy!.width).toBeGreaterThan(down!.width * 20);
   await page.getByRole("heading", { name: "Status by service" }).hover();
   await page.getByRole("button", { name: "30 days" }).click();
-  await segments.first().hover();
-  await expect(tooltip).toContainText("Last HTTP status code204");
+  await expect(segments).toHaveCount(3);
+  await segments.nth(1).hover();
+  await expect(tooltip).toContainText("Statedown");
+  await expect(tooltip).toContainText("Last HTTP status code503");
   await page.setViewportSize({ width: 375, height: 900 });
   await segments.last().hover();
   const box = await tooltip.boundingBox();
@@ -630,52 +765,106 @@ test("large histories switch from prefetched snapshots without a long pause", as
     const kind = route.request().url().split("/").at(-1)!;
     requests.push(kind);
     const now = Date.now() / 1000;
-    const bucketSeconds = kind === "hour" ? 30 : kind === "day" ? 900 : 21_600;
-    const count = kind === "day" ? 96 : 120;
-    return route.fulfill({
-      json: {
-        schema_version: 1,
-        location: { id: "primary", name: "Primary" },
-        generated_at: now,
-        expires_at: now + 3600,
-        window_seconds: bucketSeconds * count,
-        bucket_seconds: bucketSeconds,
-        services: Array.from({ length: 40 }, (_service, serviceIndex) => ({
-          id: `service-${String(serviceIndex)}.test`,
-          name: `Service ${String(serviceIndex)}`,
-          hidden: false,
-          hosting_location: null,
-          ...(kind === "current"
-            ? {
-                status: "healthy",
-                observed_at: now,
-                expires_at: now + 3600,
-                duration_seconds: 0.1,
-              }
-            : {
-                observed_success_ratio: 1,
-                coverage: 1,
-                buckets: Array.from(
-                  { length: count },
-                  (_bucket, bucketIndex) => ({
-                    ends_at: now - (count - bucketIndex) * bucketSeconds,
-                    observed_success_ratio: 1,
-                    coverage: 1,
-                    samples: bucketSeconds / 30,
-                  }),
-                ),
-              }),
-        })),
-      },
-    });
+    const services = Array.from({ length: 40 }, (_service, serviceIndex) => ({
+      id: `service-${String(serviceIndex)}.test`,
+      name: `Service ${String(serviceIndex)}`,
+      hidden: false,
+      hosting_location: null,
+      observed_success_ratio: 1,
+      coverage: 1,
+    }));
+    const envelope = {
+      location: { id: "primary", name: "Primary" },
+      generated_at: now,
+      expires_at: now + 3600,
+    };
+    let json: object;
+    switch (kind) {
+      case "current": {
+        json = {
+          ...envelope,
+          schema_version: 1,
+          services: services.map((service) => ({
+            ...service,
+            status: "healthy",
+            observed_at: now,
+            expires_at: now + 3600,
+            duration_seconds: 0.1,
+          })),
+        };
+        break;
+      }
+      case "hour": {
+        // One bar per probe at a 15-second scrape interval.
+        json = {
+          ...envelope,
+          schema_version: 2,
+          kind: "probes",
+          window_seconds: 3600,
+          scrape_interval_seconds: 15,
+          refresh_seconds: 60,
+          services: services.map((service) => ({
+            ...service,
+            probes: Array.from({ length: 240 }, (_probe, index) => ({
+              at: now - (239 - index) * 15,
+              success: true,
+              http_status_code: 200,
+            })),
+          })),
+        };
+        break;
+      }
+      case "day": {
+        // Alternating states: the worst case for a state timeline.
+        json = {
+          ...envelope,
+          schema_version: 2,
+          kind: "timeline",
+          window_seconds: 86_400,
+          scrape_interval_seconds: 15,
+          refresh_seconds: 300,
+          step_seconds: 900,
+          services: services.map((service) => ({
+            ...service,
+            segments: Array.from({ length: 96 }, (_segment, index) => ({
+              start: now - (96 - index) * 900,
+              end: now - (95 - index) * 900,
+              state: index % 2 ? "down" : "healthy",
+              samples: 60,
+              failures: index % 2,
+              last_http_status_code: index % 2 ? 503 : null,
+            })),
+          })),
+        };
+        break;
+      }
+      default: {
+        json = {
+          ...envelope,
+          schema_version: 1,
+          window_seconds: 2_592_000,
+          bucket_seconds: 21_600,
+          services: services.map((service) => ({
+            ...service,
+            buckets: Array.from({ length: 120 }, (_bucket, index) => ({
+              ends_at: now - (120 - index) * 21_600,
+              observed_success_ratio: index % 2 ? 0.5 : 1,
+              coverage: 1,
+              samples: 720,
+            })),
+          })),
+        };
+      }
+    }
+    return route.fulfill({ json });
   });
   await page.goto("/");
-  await expect(page.locator(".history-segment")).toHaveCount(4800);
+  await expect(page.locator(".history-segment")).toHaveCount(9600);
   await expect.poll(() => requests.length).toBe(4);
   for (const [label, count] of [
     ["24 hours", 3840],
     ["30 days", 4800],
-    ["1 hour", 4800],
+    ["1 hour", 9600],
   ] as const) {
     // Measure through the first painted frame, not just the click handler.
     const elapsed = await page.evaluate(async (targetLabel) => {

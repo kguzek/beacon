@@ -171,9 +171,9 @@ Here, Grafana and Prometheus appear under **Observability**; Website appears und
 | Route | Purpose | Default refresh |
 | --- | --- | --- |
 | `/v1/current` | Latest service observations. | 30 seconds |
-| `/v1/history/hour` | Last hour, in 30-second buckets. | 30 seconds |
-| `/v1/history/day` | Last 24 hours, in 15-minute buckets. | 5 minutes |
-| `/v1/history/month` | Last 30 days, in 6-hour buckets. | 30 minutes |
+| `/v1/history/hour` | Every probe from the last hour. | Scrape interval (at least 10 seconds) |
+| `/v1/history/day` | Last 24 hours as a state timeline. | 5 minutes |
+| `/v1/history/month` | Last 30 days as a state timeline. | 30 minutes |
 | `/healthz` | HTTP process is alive; does not check Prometheus. | Not applicable |
 | `/readyz` | At least one current snapshot has been collected since startup. | Not applicable |
 
@@ -187,7 +187,7 @@ Each snapshot endpoint returns HTTP 503 with error code `snapshot_unavailable` u
 - Errors contain an `error` code, not private diagnostic details.
 - Four independent refresh loops handle current, hour, day and month. Each starts immediately, runs requests sequentially and waits after completion. At most four upstream requests run concurrently.
 - Failed refreshes retain the last successful response, including its original timestamps. Retry delays double after each consecutive failure, up to 64 times the configured interval and at most 24 hours. A successful refresh resets the delay.
-- Upstream requests have timeouts and streamed byte limits. Each serialized snapshot is limited to 32 MiB; each history service has at most 1,000 buckets.
+- Upstream requests have timeouts and streamed byte limits. Each serialized snapshot is limited to 32 MiB. Hour histories hold at most one hour of raw samples per service; timelines are limited to 10,000 steps per window.
 
 **Always check the JSON expiry timestamps.** Receiving a successful HTTP response—even from a reachable publisher—does not mean its observations are still fresh.
 
@@ -248,74 +248,102 @@ Nonfinite samples are treated as missing. Missing results affect only their serv
 
 ## History response
 
-All three history endpoints use the same envelope and inventory metadata as `/v1/current`. They replace current observation fields with historical summaries and buckets.
+All three history endpoints use the same `location`, `generated_at` and `expires_at` envelope and inventory metadata as `/v1/current`, with `"schema_version": 2`. Instead of current observation fields, each service has a summary plus either a probe list (hour) or a state timeline (day and month). `kind` tells them apart.
 
-The following is an excerpt; a real response also includes `schema_version`, `location`, `generated_at` and `expires_at`, plus every bucket, including empty ones:
+### Scrape interval
+
+History is interpreted against the Blackbox job's real scrape interval. By default the publisher measures it at startup by querying `up{job="…"}[10m]`: it takes each target's median gap between scrapes, then the median across targets, rounded to whole seconds. Current status does not wait for detection. History endpoints return 503 until it succeeds, and detection is retried with the usual backoff. It fails if no target has two scrapes in the last 10 minutes, for example with scrape intervals over five minutes. In that case, set `refresh.scrape_seconds` explicitly, which also skips detection. The interval is established once per process: restart the publisher after changing the Prometheus scrape interval.
+
+Every history response includes `scrape_interval_seconds` and `refresh_seconds`, the publisher's refresh cadence for that endpoint, which the browser uses to schedule polling.
+
+### Hour: one entry per probe
 
 ```json
 {
-  "window_seconds": 86400,
-  "bucket_seconds": 900,
+  "kind": "probes",
+  "window_seconds": 3600,
+  "scrape_interval_seconds": 15,
+  "refresh_seconds": 15,
   "services": [
     {
       "id": "example.org",
       "name": "Example website",
-      "hidden": false,
-      "hosting_location": null,
-      "labels": { "group": "Websites" },
-      "observed_success_ratio": 0.95,
-      "coverage": 0.5,
-      "buckets": [
-        {
-          "ends_at": 1700000100,
-          "observed_success_ratio": 0.95,
-          "coverage": 0.5,
-          "samples": 15,
-          "last_http_status_code": 200
-        }
+      "observed_success_ratio": 0.9958,
+      "coverage": 1,
+      "probes": [
+        { "at": 1699996415, "success": true, "http_status_code": 200 },
+        { "at": 1699996430, "success": false, "http_status_code": 503 }
       ]
     }
   ]
 }
 ```
 
-### Reading the numbers
+Each entry is one real Blackbox probe: one `probe_success` sample, stored by one Prometheus scrape of `/probe`. `at` is that scrape's timestamp. `http_status_code` comes from the `probe_http_status_code` sample with the same timestamp. It is `null` when that sample is missing, 0 (no HTTP response) or outside integer 100–599. The publisher reads raw samples with instant queries for `probe_success{job="…"}[1h]` and `probe_http_status_code{job="…"}[1h]`. It does not re-aggregate them.
+
+The page draws one bar per probe. Where the gap between consecutive probes, or since the last probe, reaches 1.5 scrape intervals, it adds a gray **missed** bar for each expected check that never arrived, so gaps keep their place in time.
+
+### Day and month: state timelines
+
+```json
+{
+  "kind": "timeline",
+  "window_seconds": 86400,
+  "scrape_interval_seconds": 15,
+  "refresh_seconds": 300,
+  "step_seconds": 60,
+  "services": [
+    {
+      "id": "example.org",
+      "observed_success_ratio": 0.9997,
+      "coverage": 0.98,
+      "segments": [
+        { "start": 1699913700, "end": 1699998000, "state": "healthy", "samples": 5620, "failures": 0, "last_http_status_code": null },
+        { "start": 1699998000, "end": 1699998120, "state": "down", "samples": 8, "failures": 3, "last_http_status_code": 503 },
+        { "start": 1699998120, "end": 1700000100, "state": "healthy", "samples": 132, "failures": 0, "last_http_status_code": null }
+      ]
+    }
+  ]
+}
+```
+
+The publisher classifies every `step_seconds` step of the window, then merges consecutive steps with the same state into one segment. Segments are contiguous and cover the whole window, unknown periods included, so a segment's width on the page is proportional to `end − start`.
+
+| State | Rule for each step |
+| --- | --- |
+| **Down / red** | At least one received check failed. |
+| **Healthy / green** | No failures, and at least 80% of the expected checks (`step_seconds / scrape_interval_seconds`) were received. |
+| **Unknown / gray** | Anything else, including steps with no checks. |
+
+A real failed probe always marks its step down, even when other checks in that step are missing. `samples` and `failures` total the segment's checks. `last_http_status_code` is the most recent valid HTTP code from the segment's failing steps, and is always `null` for healthy and unknown segments. It is also `null` when label changes leave multiple series with differing last codes in the same step, since their order cannot be established.
+
+Steps are aligned to UTC epoch multiples of `step_seconds`; each excludes its start and includes its end. For each step the publisher runs `sum by (instance) (count_over_time(probe_success[step]))` and `sum by (instance) (sum_over_time(...))` through `query_range`, plus a sparse HTTP-code query restricted to failing steps. Counts are aggregated by target (`instance`) across label changes, so a step crossing a metadata change keeps both sets of checks.
+
+| Window | Duration | Setting | Default step | Default steps |
+| --- | --- | --- | --- | --- |
+| Day | 24 hours | `day_step_seconds` | 1 minute | 1,440 |
+| Month | 30 days | `month_step_seconds` | 30 minutes | 1,440 |
+
+A step must divide its window evenly, be at least the scrape interval, and give at most 10,000 steps. A step of at least twice the scrape interval avoids gray slivers caused by scrape jitter. Shorter steps are finer but produce larger Prometheus responses (each step is one point for each target); raise `prometheus.max_response_bytes` for large inventories with fine steps.
+
+### Summary fields
 
 | Field | Meaning | Example |
 | --- | --- | --- |
-| `observed_success_ratio` | Fraction of received checks that succeeded; `null` if none were received. Service summaries are weighted by sample count. | `0.95` means 95% of received checks succeeded, **not** 95% wall-clock uptime. |
-| `coverage` | Received checks divided by expected checks, capped at 1. | `0.5` means approximately half the expected checks were received. |
-| `samples` | Number of probe samples received in a bucket. | `15` means 15 checks contributed to that bucket. |
-| `ends_at` | End of the bucket, in Unix seconds. | A 900-second bucket covers the preceding 15 minutes. |
-| `last_http_status_code` | Most recent valid HTTP response code in the bucket. | `503` means the last recorded response was 503, not that every check returned 503. |
+| `observed_success_ratio` | Fraction of received checks in the window that succeeded; `null` if none were received. | `0.95` means 95% of received checks succeeded, **not** 95% wall-clock uptime. |
+| `coverage` | Received checks divided by expected checks (`window_seconds / scrape_interval_seconds`), capped at 1. | `0.5` means about half the expected checks were received. |
 
-Coverage is `min(samples / (bucket_seconds / scrape_seconds), 1)`; service summary coverage uses the whole window. It is an estimate: scrape timing jitter, configuration changes and gaps affect it. Missing or failed scrapes reduce coverage; they are never counted as successful probes.
+Missing or failed scrapes reduce coverage; they are never counted as successful probes.
 
-`last_http_status_code` is `null` for empty buckets, missing metrics, no HTTP response (code 0), or values outside integer 100–599. It is also `null` when label changes leave multiple series with differing last codes in the same bucket, since their order cannot be established. Older publishers may omit this field. Historical health is based on success ratio and coverage, not the HTTP code alone.
-
-Historical sample counts and success totals are aggregated by target (`instance`) across label changes before calculating success ratios. A bucket crossing a metadata change therefore retains both sets of checks, with a sample-weighted success ratio, rather than rejecting the snapshot or averaging per-series averages.
-
-### Windows, buckets and expiry
-
-| Window | Duration | Default bucket width | Default bucket count |
-| --- | --- | --- | --- |
-| Hour | 1 hour | 30 seconds | 120 |
-| Day | 24 hours | 15 minutes | 96 |
-| Month | 30 days | 6 hours | 120 |
-
-Window durations and routes are fixed; bucket widths are configurable at startup. For one check per hour-view bucket, set `hour_bucket_seconds` to the actual `scrape_seconds` (both default to 30).
-
-Only completed buckets are queried, aligned to UTC epoch multiples. Each bucket excludes its start and includes its end. The publisher runs `avg_over_time(probe_success[width])`, `count_over_time(...)` and `last_over_time(probe_http_status_code[width])` through Prometheus `query_range` for the configured job.
+### Expiry and polling
 
 History expires at its generation time plus **three times its refresh interval**, independently of current data. The browser does not display expired history as fresh history.
 
-The browser schedules each observer’s streams independently, using snapshot generation times and the measured publication cadence rather than a fixed offset from page load. A short settling margin and bounded one-second retries allow for snapshots still being generated. Failures or expired snapshots fall back to the normal polling interval. “Last checked” still uses each probe’s actual `observed_at` timestamp: synchronizing snapshot retrieval does not make an older probe result newly checked.
+The browser schedules each observer’s streams independently, using `refresh_seconds`, snapshot generation times and the measured publication cadence rather than a fixed offset from page load. A short settling margin and bounded one-second retries allow for snapshots still being generated. Failures or expired snapshots fall back to the normal polling interval. “Last checked” still uses each probe’s actual `observed_at` timestamp: synchronizing snapshot retrieval does not make an older probe result newly checked.
 
-History-bar colors mean:
+### Upgrading from schema version 1
 
-- **Unknown / gray:** coverage is below 80%, or no success ratio is available.
-- **Healthy / green:** sufficient coverage and every received check succeeded.
-- **Down / red:** sufficient coverage and at least one received check failed.
+Version 1 history used fixed buckets (`bucket_seconds`, `buckets`) configured with `hour_bucket_seconds`, `day_bucket_seconds` and `month_bucket_seconds`. Those settings have been removed, and leaving them in a configuration file fails startup. `scrape_seconds` and `hour_seconds` are now optional. During deployment skew, the browser still accepts version 1 responses and draws their buckets as a state timeline. A bucket is unknown when its coverage is below 80%, healthy when every check succeeded, and down otherwise.
 
 ## Browser policy
 

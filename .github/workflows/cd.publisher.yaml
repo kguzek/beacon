@@ -23,7 +23,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-24.04 # ubuntu 26+ doesn't work (i forgot why)
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +39,7 @@ jobs:
       - name: Build AMD64 publisher image
         if: matrix.arch == 'amd64'
         run: |
-          podman build \
+          docker build \
             --file publisher/Containerfile \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
@@ -57,7 +58,7 @@ jobs:
       - name: Cross-compile ARMv7 publisher
         if: matrix.arch == 'armv7'
         env:
-          CROSS_CONTAINER_ENGINE: podman
+          CROSS_CONTAINER_ENGINE: docker
         run: cross +1.96.0 build --locked --release -p beacon-publisher --target armv7-unknown-linux-musleabihf
 
       - name: Verify ARMv7 executable is static
@@ -104,7 +105,7 @@ jobs:
           context="${RUNNER_TEMP}/beacon-armv7"
           mkdir -p "$context"
           cp target/armv7-unknown-linux-musleabihf/release/beacon-publisher "$context/beacon-publisher"
-          podman build \
+          docker build \
             --platform linux/arm/v7 \
             --file publisher/Containerfile.armv7 \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
@@ -115,14 +116,15 @@ jobs:
       - name: Log in to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GHCR_TOKEN" | podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Push publisher image
         env:
           ARCH: ${{ matrix.arch }}
-        run: podman push "${IMAGE}:${GITHUB_SHA}-${ARCH}"
+        run: docker push "${IMAGE}:${GITHUB_SHA}-${ARCH}"
 
   publish:
+    if: github.server_url == 'https://github.com'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -132,15 +134,15 @@ jobs:
       - name: Log in to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GHCR_TOKEN" | podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Publish multi-architecture publisher image
         run: |
-          podman manifest create beacon-release
-          podman manifest add beacon-release "docker://${IMAGE}:${GITHUB_SHA}-amd64"
-          podman manifest add --arch arm --variant v7 beacon-release "docker://${IMAGE}:${GITHUB_SHA}-armv7"
-          podman manifest push --all beacon-release "docker://${IMAGE}:${GITHUB_SHA}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${GITHUB_SHA}" \
+            "${IMAGE}:${GITHUB_SHA}-amd64" \
+            "${IMAGE}:${GITHUB_SHA}-armv7"
 
       - name: Push latest publisher image
         if: github.ref == 'refs/heads/main'
-        run: podman manifest push --all beacon-release "docker://${IMAGE}:latest"
+        run: docker buildx imagetools create --tag "${IMAGE}:latest" "${IMAGE}:${GITHUB_SHA}"

@@ -53,7 +53,11 @@ impl Prometheus {
             serde_json::to_string(&self.config.prometheus.job).unwrap()
         )
     }
-    async fn query(&self, query: &str, at: f64, range: Option<(u64, u64)>) -> Result<Samples> {
+    async fn query(&self, query: &str, at: f64, kind: Kind) -> Result<Samples> {
+        let range = match kind {
+            Kind::Range { window, step } => Some((window, step)),
+            _ => None,
+        };
         let mut url = url::Url::parse(&self.config.prometheus.url)?;
         url.set_path(&format!(
             "{}/api/v1/{}",
@@ -122,22 +126,54 @@ impl Prometheus {
             );
             body.extend_from_slice(&chunk);
         }
-        parse(&body, range.is_some(), &self.services)
+        let (matrix, max_points) = match kind {
+            Kind::Vector => (false, 1),
+            Kind::Matrix(max) => (true, max),
+            Kind::Range { window, step } => (true, (window / step) as usize + 1),
+        };
+        parse(&body, matrix, max_points, &self.services)
+    }
+    /// Median spacing of `up` samples per target, then the median across targets.
+    pub async fn detect_scrape_interval(&self, now: f64) -> Result<u64> {
+        if let Some(seconds) = self.config.refresh.scrape_seconds {
+            return Ok(seconds);
+        }
+        let samples = self
+            .query(
+                &format!("{}[{DETECT_WINDOW}s]", self.selector("up")),
+                now,
+                Kind::Matrix(DETECT_WINDOW as usize + 10),
+            )
+            .await?;
+        let mut intervals: Vec<f64> = samples
+            .values()
+            .filter_map(|points| {
+                let gaps: Vec<f64> = points.windows(2).map(|p| p[1].0 - p[0].0).collect();
+                median(gaps)
+            })
+            .collect();
+        intervals.retain(|v| *v > 0.0);
+        let interval = median(intervals).context(
+            "cannot detect scrape interval: no target has two recent scrapes; set refresh.scrape_seconds",
+        )?;
+        Ok((interval.round() as u64).clamp(1, 3600))
     }
     pub async fn current(&self, now: f64) -> Result<Vec<u8>> {
         let success = self.selector("probe_success");
         let up = self.selector("up");
         let duration = self.selector("probe_duration_seconds");
         // Sequential queries bound upstream concurrency to three independent refresh tasks.
-        let values = self.query(&success, now, None).await?;
+        let values = self.query(&success, now, Kind::Vector).await?;
         let stamps = self
-            .query(&format!("timestamp({success})"), now, None)
+            .query(&format!("timestamp({success})"), now, Kind::Vector)
             .await?;
-        let scrapes = self.query(&up, now, None).await?;
-        let scrape_stamps = self.query(&format!("timestamp({up})"), now, None).await?;
-        let durations = self.query(&duration, now, None).await?;
+        let scrapes = self.query(&up, now, Kind::Vector).await?;
+        let scrape_stamps = self
+            .query(&format!("timestamp({up})"), now, Kind::Vector)
+            .await?;
+        let durations = self.query(&duration, now, Kind::Vector).await?;
         let duration_stamps = self
-            .query(&format!("timestamp({duration})"), now, None)
+            .query(&format!("timestamp({duration})"), now, Kind::Vector)
             .await?;
         let stale = self.config.refresh.stale_seconds as f64;
         let services = self
@@ -180,108 +216,253 @@ impl Prometheus {
             services,
         })?)
     }
-    pub async fn history(&self, now: f64, period: &str) -> Result<Vec<u8>> {
-        let r = &self.config.refresh;
-        let (window, bucket, interval) = match period {
-            "hour" => (3600, r.hour_bucket_seconds, r.hour_seconds),
-            "day" => (86400, r.day_bucket_seconds, r.day_seconds),
-            "month" => (2592000, r.month_bucket_seconds, r.month_seconds),
+    pub async fn history(&self, now: f64, period: &str, interval: u64) -> Result<Vec<u8>> {
+        match period {
+            "hour" => self.probes(now, interval).await,
+            "day" => {
+                let r = &self.config.refresh;
+                self.timeline(now, 86400, r.day_step_seconds, r.day_seconds, interval)
+                    .await
+            }
+            "month" => {
+                let r = &self.config.refresh;
+                self.timeline(
+                    now,
+                    2592000,
+                    r.month_step_seconds,
+                    r.month_seconds,
+                    interval,
+                )
+                .await
+            }
             _ => anyhow::bail!("invalid history period"),
-        };
-        let end = (now / bucket as f64).floor() * bucket as f64;
-        let selector = self.selector("probe_success");
-        // Metadata changes split a target into multiple series, including within
-        // a bucket. Combine sample totals, not per-series averages or counts.
-        let count_query = format!("sum by (instance) (count_over_time({selector}[{bucket}s]))");
-        let averages = self
+        }
+    }
+    /// Every raw probe in the last hour, one entry per Blackbox scrape.
+    async fn probes(&self, now: f64, interval: u64) -> Result<Vec<u8>> {
+        let window = 3600;
+        let max = Kind::Matrix((window / interval) as usize + 10);
+        let success = self
             .query(
-                &format!(
-                    "sum by (instance) (sum_over_time({selector}[{bucket}s])) / {count_query}"
-                ),
-                end,
-                Some((window, bucket)),
+                &format!("{}[{window}s]", self.selector("probe_success")),
+                now,
+                max,
             )
             .await?;
-        let counts = self
-            .query(&count_query, end, Some((window, bucket)))
-            .await?;
-        let expected = bucket as f64 / r.scrape_seconds as f64;
-        let last_code = format!(
-            "last_over_time({}[{bucket}s])",
-            self.selector("probe_http_status_code")
-        );
-        // Without an original sample timestamp we cannot order differing codes
-        // from old/new label sets. Omit that optional detail, not the history.
+        // Both metrics come from the same scrape, so their timestamps match exactly.
         let codes = self
             .query(
-                &format!("max by (instance) ({last_code}) == min by (instance) ({last_code})"),
-                end,
-                Some((window, bucket)),
+                &format!("{}[{window}s]", self.selector("probe_http_status_code")),
+                now,
+                max,
             )
             .await?;
+        let expected = window as f64 / interval as f64;
         let services = self
             .services
             .iter()
             .map(|s| {
-                let mut total = 0;
-                let mut successes = 0.0;
-                let buckets = (1..=window / bucket)
-                    .map(|i| {
-                        let ends_at = end - window as f64 + (i * bucket) as f64;
-                        let count = at(&counts, &s.target, ends_at)
-                            .filter(|v| *v >= 0.0 && v.fract() == 0.0)
-                            .unwrap_or(0.0) as u64;
-                        let ratio =
-                            at(&averages, &s.target, ends_at).filter(|v| (0.0..=1.0).contains(v));
-                        let samples = if ratio.is_some() { count } else { 0 };
-                        total += samples;
-                        successes += ratio.unwrap_or(0.0) * samples as f64;
-                        Bucket {
-                            ends_at,
-                            observed_success_ratio: ratio.filter(|_| samples > 0),
-                            coverage: (samples as f64 / expected).min(1.0),
-                            samples,
-                            last_http_status_code: at(&codes, &s.target, ends_at)
-                                .filter(|v| {
-                                    samples > 0 && (100.0..=599.0).contains(v) && v.fract() == 0.0
-                                })
-                                .map(|v| v as u16),
-                        }
+                let codes = codes.get(&s.target);
+                let probes: Vec<Probe> = success
+                    .get(&s.target)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(_, v)| *v == 0.0 || *v == 1.0)
+                    .map(|&(at, value)| Probe {
+                        at,
+                        success: value == 1.0,
+                        http_status_code: codes
+                            .and_then(|c| {
+                                c.get(c.partition_point(|p| p.0 < at)).filter(|p| p.0 == at)
+                            })
+                            .and_then(|p| http_code(p.1)),
                     })
                     .collect();
+                let successes = probes.iter().filter(|p| p.success).count();
                 HistoryService {
                     service: s.clone(),
-                    observed_success_ratio: (total > 0).then(|| successes / total as f64),
-                    coverage: (total as f64 / (window as f64 / r.scrape_seconds as f64)).min(1.0),
-                    buckets,
+                    observed_success_ratio: (!probes.is_empty())
+                        .then(|| successes as f64 / probes.len() as f64),
+                    coverage: (probes.len() as f64 / expected).min(1.0),
+                    data: Probes { probes },
+                }
+            })
+            .collect();
+        let refresh = self.config.refresh.hour_interval(interval);
+        Ok(serde_json::to_vec(&History {
+            schema_version: 2,
+            kind: "probes",
+            location: self.config.location.clone(),
+            generated_at: now,
+            expires_at: now + (refresh * 3) as f64,
+            window_seconds: window,
+            scrape_interval_seconds: interval,
+            refresh_seconds: refresh,
+            step_seconds: None,
+            services,
+        })?)
+    }
+    /// State timeline: fine steps classified, then merged into runs of equal state.
+    async fn timeline(
+        &self,
+        now: f64,
+        window: u64,
+        step: u64,
+        refresh: u64,
+        interval: u64,
+    ) -> Result<Vec<u8>> {
+        ensure!(
+            step >= interval,
+            "history step shorter than the scrape interval; raise day/month_step_seconds"
+        );
+        let end = (now / step as f64).floor() * step as f64;
+        let range = Kind::Range { window, step };
+        let selector = self.selector("probe_success");
+        // Metadata changes split a target into multiple series, including within
+        // a step. Combine sample totals, not per-series averages or counts.
+        let counts = self
+            .query(
+                &format!("sum by (instance) (count_over_time({selector}[{step}s]))"),
+                end,
+                range,
+            )
+            .await?;
+        let sums = self
+            .query(
+                &format!("sum by (instance) (sum_over_time({selector}[{step}s]))"),
+                end,
+                range,
+            )
+            .await?;
+        let last_code = format!(
+            "last_over_time({}[{step}s])",
+            self.selector("probe_http_status_code")
+        );
+        // Codes only for failing steps (sparse). Without an original sample
+        // timestamp we cannot order differing codes from old/new label sets.
+        let codes = self
+            .query(
+                &format!(
+                    "(max by (instance) ({last_code}) == min by (instance) ({last_code})) \
+                     and on (instance) (min by (instance) (min_over_time({selector}[{step}s])) == 0)"
+                ),
+                end,
+                range,
+            )
+            .await?;
+        let expected = step as f64 / interval as f64;
+        let steps = window / step;
+        let services = self
+            .services
+            .iter()
+            .map(|s| {
+                let mut segments: Vec<Segment> = vec![];
+                let mut total = 0;
+                let mut failed = 0;
+                for i in 1..=steps {
+                    let ends_at = end - window as f64 + (i * step) as f64;
+                    let count = at(&counts, &s.target, ends_at)
+                        .filter(|v| *v >= 0.0 && v.fract() == 0.0)
+                        .unwrap_or(0.0);
+                    let sum = at(&sums, &s.target, ends_at).filter(|v| (0.0..=count).contains(v));
+                    let (samples, failures) = match sum {
+                        Some(sum) => (count as u64, (count - sum).round() as u64),
+                        None => (0, 0),
+                    };
+                    total += samples;
+                    failed += failures;
+                    let state = if failures > 0 {
+                        Status::Down
+                    } else if samples > 0 && samples as f64 >= expected * 0.8 {
+                        Status::Healthy
+                    } else {
+                        Status::Unknown
+                    };
+                    let code = at(&codes, &s.target, ends_at)
+                        .and_then(http_code)
+                        .filter(|_| failures > 0);
+                    match segments.last_mut() {
+                        Some(last) if last.state == state => {
+                            last.end = ends_at;
+                            last.samples += samples;
+                            last.failures += failures;
+                            last.last_http_status_code = code.or(last.last_http_status_code);
+                        }
+                        _ => segments.push(Segment {
+                            start: ends_at - step as f64,
+                            end: ends_at,
+                            state,
+                            samples,
+                            failures,
+                            last_http_status_code: code,
+                        }),
+                    }
+                }
+                HistoryService {
+                    service: s.clone(),
+                    observed_success_ratio: (total > 0)
+                        .then(|| (total - failed) as f64 / total as f64),
+                    coverage: (total as f64 / (window as f64 / interval as f64)).min(1.0),
+                    data: Segments { segments },
                 }
             })
             .collect();
         Ok(serde_json::to_vec(&History {
-            schema_version: 1,
+            schema_version: 2,
+            kind: "timeline",
             location: self.config.location.clone(),
             generated_at: now,
-            expires_at: now + (interval * 3) as f64,
+            expires_at: now + (refresh * 3) as f64,
             window_seconds: window,
-            bucket_seconds: bucket,
+            scrape_interval_seconds: interval,
+            refresh_seconds: refresh,
+            step_seconds: Some(step),
             services,
         })?)
     }
 }
+const DETECT_WINDOW: u64 = 600;
+#[derive(Clone, Copy)]
+enum Kind {
+    Vector,
+    /// Instant query with a range selector: raw samples, capped per series.
+    Matrix(usize),
+    Range {
+        window: u64,
+        step: u64,
+    },
+}
+fn median(mut values: Vec<f64>) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    let mid = values.len() / 2;
+    Some(if values.len().is_multiple_of(2) {
+        (values[mid - 1] + values[mid]) / 2.0
+    } else {
+        values[mid]
+    })
+}
+fn http_code(value: f64) -> Option<u16> {
+    ((100.0..=599.0).contains(&value) && value.fract() == 0.0).then_some(value as u16)
+}
 fn instant(samples: &Samples, target: &str) -> Option<f64> {
     samples.get(target)?.first().map(|p| p.1)
 }
+/// Matrix samples are sorted by time (see `parse`), so binary search suffices.
 fn at(samples: &Samples, target: &str, time: f64) -> Option<f64> {
-    samples
-        .get(target)?
-        .iter()
-        .find(|p| (p.0 - time).abs() < 0.01)
+    let points = samples.get(target)?;
+    let index = points.partition_point(|p| p.0 < time - 0.01);
+    points
+        .get(index)
+        .filter(|p| (p.0 - time).abs() < 0.01)
         .map(|p| p.1)
 }
 pub fn fresh(time: f64, now: f64, stale: f64) -> bool {
     time <= now + 5.0 && now - time <= stale
 }
-pub fn parse(body: &[u8], range: bool, services: &[Service]) -> Result<Samples> {
+pub fn parse(body: &[u8], range: bool, max_points: usize, services: &[Service]) -> Result<Samples> {
     let envelope: Envelope = serde_json::from_slice(body).context("invalid upstream JSON")?;
     ensure!(
         envelope.status == "success" && envelope.warnings.is_empty(),
@@ -308,7 +489,7 @@ pub fn parse(body: &[u8], range: bool, services: &[Service]) -> Result<Samples> 
         } else {
             vec![series.value.context("missing vector sample")?]
         };
-        ensure!(raw.len() <= 1001, "too many upstream samples");
+        ensure!(raw.len() <= max_points, "too many upstream samples");
         let mut points = Vec::new();
         let mut previous = f64::NEG_INFINITY;
         for (time, value) in raw {
@@ -340,7 +521,7 @@ pub fn parse(body: &[u8], range: bool, services: &[Service]) -> Result<Samples> 
                 );
             }
             points.dedup_by(|a, b| a.0 == b.0);
-            ensure!(points.len() <= 1001, "too many upstream samples");
+            ensure!(points.len() <= max_points, "too many upstream samples");
         }
     }
     Ok(result)

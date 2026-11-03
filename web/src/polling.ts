@@ -4,8 +4,15 @@ export class SnapshotPollSchedule {
   private interval: number;
   private retries = 0;
 
-  constructor(private readonly defaultInterval: number) {
+  constructor(private defaultInterval: number) {
     this.interval = defaultInterval;
+  }
+
+  /** Adopt the cadence a publisher reports, replacing the built-in guess. */
+  useInterval(seconds: number | undefined) {
+    if (seconds === undefined || seconds === this.defaultInterval) return;
+    this.defaultInterval = seconds;
+    this.interval = seconds;
   }
 
   nextDelay(

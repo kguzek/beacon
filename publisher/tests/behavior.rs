@@ -144,9 +144,25 @@ fn startup_only_and_required_files() {
     assert_eq!(loaded.location.id, "primary");
     assert!(Config::load(&path).is_err());
     assert!(Config::load(Path::new("/nonexistent/beacon.toml")).is_err());
+    for step in [7, 0] {
+        let mut invalid = config();
+        invalid.refresh.day_step_seconds = step;
+        assert!(invalid.validate().is_err());
+    }
     let mut invalid = config();
-    invalid.refresh.day_bucket_seconds = 1;
-    assert!(invalid.validate().is_err());
+    invalid.refresh.scrape_seconds = Some(120);
+    assert!(
+        invalid.validate().is_err(),
+        "step shorter than scrape interval"
+    );
+    // Removed bucket settings fail loudly rather than being ignored.
+    assert!(
+        toml::from_str::<Config>(&format!(
+            "{}\nhour_bucket_seconds = 30",
+            include_str!("../../examples/config.toml")
+        ))
+        .is_err()
+    );
 }
 
 #[test]
@@ -239,14 +255,30 @@ fn upstream_validation_and_freshness() {
         .unwrap()
     };
     assert_eq!(
-        parse(&encode(json!([series.clone()])), false, &services)
+        parse(&encode(json!([series.clone()])), false, 1, &services)
             .unwrap()
             .len(),
         1
     );
-    assert!(parse(&encode(json!([series.clone(), series])), false, &services).is_err());
-    assert!(parse(br#"{"status":"error","error":"private"}"#, false, &services).is_err());
-    assert!(parse(&encode(json!([])), true, &services).is_err());
+    assert!(
+        parse(
+            &encode(json!([series.clone(), series])),
+            false,
+            1,
+            &services
+        )
+        .is_err()
+    );
+    assert!(
+        parse(
+            br#"{"status":"error","error":"private"}"#,
+            false,
+            1,
+            &services
+        )
+        .is_err()
+    );
+    assert!(parse(&encode(json!([])), true, 1, &services).is_err());
     assert!(fresh(99.0, 100.0, 10.0));
     assert!(!fresh(50.0, 100.0, 10.0));
     assert!(!fresh(110.0, 100.0, 10.0));
@@ -274,7 +306,16 @@ fn historical_series_survive_grouping_label_changes() {
         json!([old.clone(), new.clone()]),
         json!([new.clone(), old.clone()]),
     ] {
-        let parsed = parse(&encode(series), true, &services).unwrap();
+        let parsed = parse(&encode(series), true, 10, &services).unwrap();
+        assert!(
+            parse(
+                &encode(json!([old.clone(), new.clone()])),
+                true,
+                2,
+                &services
+            )
+            .is_err()
+        );
         assert_eq!(
             parsed[&services[0].target],
             [(30.0, 1.0), (60.0, 1.0), (90.0, 0.0)]
@@ -282,7 +323,15 @@ fn historical_series_survive_grouping_label_changes() {
     }
     let mut conflicting = new;
     conflicting["values"][0][1] = json!("0");
-    assert!(parse(&encode(json!([old, conflicting])), true, &services).is_err());
+    assert!(parse(&encode(json!([old, conflicting])), true, 10, &services).is_err());
+}
+
+/// serde_json's default float parsing is not exactly round-tripping.
+fn close(value: &Value, expected: f64) {
+    assert!(
+        (value.as_f64().unwrap() - expected).abs() < 1e-12,
+        "{value} != {expected}"
+    );
 }
 
 #[derive(Clone)]
@@ -316,59 +365,86 @@ async fn upstream(
     if mode == 5 {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
-    let result = if params.contains_key("step") {
+    const TARGET: &str = "https://example.org/private?token=secret";
+    let series = |values: Vec<Value>| json!([{"metric": {"instance": TARGET, "private": "secret"}, "values": values}]);
+    let matrix = |result: Value| {
+        (
+            StatusCode::OK,
+            Json(json!({"status": "success", "data": {"resultType": "matrix", "result": result}})),
+        )
+    };
+    if params.contains_key("step") {
         let start: f64 = params["start"].parse().unwrap();
         let step: f64 = params["step"].parse().unwrap();
+        let points = ((now - start) / step).round() as usize + 1;
+        let per_step = (step / 15.0).to_string();
         if mode == 6 {
-            // A metadata change within one bucket: old series has one success,
-            // new series has two failures. Aggregation must use 1/3, not 1/2.
-            let selector = "probe_success{job=\"blackbox_http\"}";
-            let count = format!("sum by (instance) (count_over_time({selector}[{step}s]))");
-            let average =
-                format!("sum by (instance) (sum_over_time({selector}[{step}s])) / {count}");
-            let code =
-                format!("last_over_time(probe_http_status_code{{job=\"blackbox_http\"}}[{step}s])");
-            let result = if query == &count || query == &average {
-                json!([{
-                    "metric": {"instance": "https://example.org/private?token=secret"},
-                    "values": [[start, if query == &count { "3" } else { "0.3333333333333333" }]]
-                }])
+            // A metadata change within one step: old series has one success,
+            // new series has two failures. Totals must give 3 samples, 2 failures.
+            let value = if query.starts_with("sum by (instance) (count_over_time(") {
+                "3"
+            } else if query.starts_with("sum by (instance) (sum_over_time(") {
+                "1"
             } else {
-                assert_eq!(
-                    query,
-                    &format!("max by (instance) ({code}) == min by (instance) ({code})")
-                );
                 // The last HTTP codes differ (200 and 503); comparison omits it.
-                json!([])
+                return matrix(json!([]));
             };
-            return (
-                StatusCode::OK,
-                Json(json!({
-                    "status": "success", "data": {"resultType": "matrix", "result": result}
-                })),
-            );
+            return matrix(series(vec![json!([start, value])]));
         }
-        let value = if query.starts_with("sum by (instance) (count_over_time(") {
-            (step / 30.0 / 2.0).ceil().to_string()
-        } else if query.starts_with("max by (instance) (last_over_time(probe_http_status_code") {
-            match mode {
-                1 => "0",
-                2 => "600",
-                3 => "200.5",
-                _ => "503",
-            }
-            .to_owned()
-        } else {
-            "0.5".to_owned()
-        };
-        let mut values = vec![];
-        let mut at = start;
-        while at <= now {
-            values.push(json!([at, value]));
-            at += step;
+        // Steps 0..5 have no samples (unknown), step n-3 has one failure (down).
+        let values = (0..points)
+            .filter(|i| *i >= 5)
+            .map(|i| {
+                let at = start + i as f64 * step;
+                let value = if query.starts_with("sum by (instance) (count_over_time(") {
+                    per_step.clone()
+                } else if query.starts_with("sum by (instance) (sum_over_time(") {
+                    ((step / 15.0) - if i == points - 3 { 1.0 } else { 0.0 }).to_string()
+                } else {
+                    match mode {
+                        1 => "0",
+                        2 => "600",
+                        3 => "200.5",
+                        _ => "503",
+                    }
+                    .to_owned()
+                };
+                json!([at, value])
+            })
+            .collect();
+        return matrix(series(values));
+    }
+    if let Some(window) = query
+        .strip_suffix("s]")
+        .and_then(|q| q.rsplit_once('['))
+        .map(|(_, w)| w.parse::<f64>().unwrap())
+    {
+        // Raw samples: one scrape every 15 seconds, the second-to-last failing.
+        if mode == 4 {
+            return matrix(json!([]));
         }
-        json!([{"metric":{"instance":"https://example.org/private?token=secret","private":"secret"},"values":values}])
-    } else if mode == 4 {
+        let count = (window / 15.0) as usize;
+        let values = (0..count)
+            .map(|i| {
+                let at = now - (count - 1 - i) as f64 * 15.0;
+                let failed = i == count - 2;
+                let value = if query.starts_with("probe_http_status_code") {
+                    match (mode, failed) {
+                        (2, _) => "600",
+                        (_, true) => "503",
+                        _ => "200",
+                    }
+                } else if query.starts_with("probe_success") && failed {
+                    "0"
+                } else {
+                    "1"
+                };
+                json!([at, value])
+            })
+            .collect();
+        return matrix(series(values));
+    }
+    let result = if mode == 4 {
         json!([])
     } else {
         let value = if query.starts_with("timestamp(") {
@@ -382,13 +458,11 @@ async fn upstream(
         } else {
             "1".into()
         };
-        json!([{"metric":{"instance":"https://example.org/private?token=secret","private":"secret"},"value":[now,value]}])
+        json!([{"metric":{"instance":TARGET,"private":"secret"},"value":[now,value]}])
     };
     (
         StatusCode::OK,
-        Json(
-            json!({"status":"success","data":{"resultType":if params.contains_key("step") {"matrix"} else {"vector"},"result":result}}),
-        ),
+        Json(json!({"status":"success","data":{"resultType":"vector","result":result}})),
     )
 }
 async fn mock() -> (Config, Mock, tokio::task::JoinHandle<()>) {
@@ -444,58 +518,145 @@ async fn current_missing_failed_stale_and_sanitized() {
     task.abort();
 }
 #[tokio::test]
-async fn history_coverage_and_fixed_buckets() {
-    let (config, mock, task) = mock().await;
-    let upstream = Prometheus::new(config, inventory(yaml()).unwrap()).unwrap();
-    for (period, buckets) in [("hour", 120), ("day", 96), ("month", 120)] {
-        let value: Value =
-            serde_json::from_slice(&upstream.history(3000000.0, period).await.unwrap()).unwrap();
-        assert_eq!(
-            value["services"][0]["coverage"],
-            if period == "hour" { 1.0 } else { 0.5 }
-        );
-        if period == "hour" {
-            assert_eq!(value["window_seconds"], 3600);
-            assert_eq!(value["bucket_seconds"], 30);
-        }
-        assert_eq!(value["services"][0]["observed_success_ratio"], 0.5);
-        assert_eq!(value["services"][0]["labels"], json!({"group": "Websites"}));
-        assert_eq!(
-            value["services"][0]["buckets"].as_array().unwrap().len(),
-            buckets
-        );
-        assert_eq!(value["services"][1]["coverage"], 0.0);
-        assert!(value["services"][1]["observed_success_ratio"].is_null());
-        assert_eq!(
-            value["services"][0]["buckets"][0]["last_http_status_code"],
-            503
-        );
-        assert!(value["services"][1]["buckets"][0]["last_http_status_code"].is_null());
-    }
-    for mode in [1, 2, 3] {
-        mock.mode.store(mode, Ordering::SeqCst);
-        let value: Value =
-            serde_json::from_slice(&upstream.history(3000000.0, "day").await.unwrap()).unwrap();
-        assert!(value["services"][0]["buckets"][0]["last_http_status_code"].is_null());
-    }
+async fn scrape_interval_detection() {
+    let (mut config, mock, task) = mock().await;
+    let upstream = Prometheus::new(config.clone(), inventory(yaml()).unwrap()).unwrap();
+    assert_eq!(
+        upstream.detect_scrape_interval(3000000.0).await.unwrap(),
+        15
+    );
+    mock.mode.store(4, Ordering::SeqCst);
+    let error = upstream
+        .detect_scrape_interval(3000000.0)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("scrape_seconds"));
+    config.refresh.scrape_seconds = Some(30);
+    let requests = mock.requests.load(Ordering::SeqCst);
+    let configured = Prometheus::new(config, inventory(yaml()).unwrap()).unwrap();
+    assert_eq!(
+        configured.detect_scrape_interval(3000000.0).await.unwrap(),
+        30
+    );
+    assert_eq!(mock.requests.load(Ordering::SeqCst), requests);
     task.abort();
 }
 
 #[tokio::test]
-async fn history_aggregates_buckets_crossing_metadata_changes() {
+async fn hour_history_lists_every_probe() {
+    let (config, mock, task) = mock().await;
+    let upstream = Prometheus::new(config, inventory(yaml()).unwrap()).unwrap();
+    let now = 3000000.0;
+    let value: Value =
+        serde_json::from_slice(&upstream.history(now, "hour", 15).await.unwrap()).unwrap();
+    assert_eq!(value["schema_version"], 2);
+    assert_eq!(value["kind"], "probes");
+    assert_eq!(value["window_seconds"], 3600);
+    assert_eq!(value["scrape_interval_seconds"], 15);
+    assert_eq!(value["refresh_seconds"], 15);
+    assert!(value.get("step_seconds").is_none());
+    let service = &value["services"][0];
+    let probes = service["probes"].as_array().unwrap();
+    assert_eq!(probes.len(), 240);
+    assert_eq!(service["coverage"], 1.0);
+    close(&service["observed_success_ratio"], 239.0 / 240.0);
+    assert_eq!(probes[239]["at"], now);
+    assert_eq!(probes[239]["success"], true);
+    assert_eq!(probes[239]["http_status_code"], 200);
+    assert_eq!(probes[238]["success"], false);
+    assert_eq!(probes[238]["http_status_code"], 503);
+    assert_eq!(value["services"][1]["probes"], json!([]));
+    assert!(value["services"][1]["observed_success_ratio"].is_null());
+    assert_eq!(value["services"][1]["coverage"], 0.0);
+    // More raw samples than one per scrape interval are rejected.
+    assert!(upstream.history(now, "hour", 60).await.is_err());
+    mock.mode.store(2, Ordering::SeqCst);
+    let value: Value =
+        serde_json::from_slice(&upstream.history(now, "hour", 15).await.unwrap()).unwrap();
+    assert!(value["services"][0]["probes"][238]["http_status_code"].is_null());
+    task.abort();
+}
+
+#[tokio::test]
+async fn day_and_month_history_are_state_timelines() {
+    let (config, mock, task) = mock().await;
+    let upstream = Prometheus::new(config, inventory(yaml()).unwrap()).unwrap();
+    let now = 3000010.0;
+    for (period, window, step) in [("day", 86400.0, 60.0), ("month", 2592000.0, 1800.0)] {
+        let value: Value =
+            serde_json::from_slice(&upstream.history(now, period, 15).await.unwrap()).unwrap();
+        assert_eq!(value["kind"], "timeline");
+        assert_eq!(value["step_seconds"], step);
+        assert_eq!(value["services"][0]["labels"], json!({"group": "Websites"}));
+        let end = (now / step).floor() * step;
+        let segments = value["services"][0]["segments"].as_array().unwrap();
+        let states: Vec<_> = segments
+            .iter()
+            .map(|s| s["state"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            states,
+            ["unknown", "healthy", "down", "healthy"],
+            "{period}"
+        );
+        // Contiguous, covering the whole window.
+        assert_eq!(segments[0]["start"], end - window);
+        assert_eq!(segments[3]["end"], end);
+        for pair in segments.windows(2) {
+            assert_eq!(pair[0]["end"], pair[1]["start"]);
+        }
+        assert_eq!(
+            segments[0]["end"].as_f64().unwrap() - segments[0]["start"].as_f64().unwrap(),
+            5.0 * step
+        );
+        assert_eq!(segments[0]["samples"], 0);
+        assert_eq!(
+            segments[2]["end"].as_f64().unwrap() - segments[2]["start"].as_f64().unwrap(),
+            step
+        );
+        assert_eq!(segments[2]["failures"], 1);
+        assert_eq!(segments[2]["last_http_status_code"], 503);
+        assert!(segments[1]["last_http_status_code"].is_null());
+        assert_eq!(segments[3]["samples"], 2.0 * step / 15.0);
+        let samples = (window / step - 5.0) * step / 15.0;
+        close(
+            &value["services"][0]["observed_success_ratio"],
+            (samples - 1.0) / samples,
+        );
+        assert_eq!(value["services"][0]["coverage"], samples / (window / 15.0));
+        let hidden = &value["services"][1];
+        assert_eq!(hidden["segments"].as_array().unwrap().len(), 1);
+        assert_eq!(hidden["segments"][0]["state"], "unknown");
+        assert!(hidden["observed_success_ratio"].is_null());
+    }
+    for mode in [1, 2, 3] {
+        mock.mode.store(mode, Ordering::SeqCst);
+        let value: Value =
+            serde_json::from_slice(&upstream.history(now, "day", 15).await.unwrap()).unwrap();
+        assert!(value["services"][0]["segments"][2]["last_http_status_code"].is_null());
+    }
+    // A step must hold at least one scrape.
+    assert!(upstream.history(now, "day", 120).await.is_err());
+    task.abort();
+}
+
+#[tokio::test]
+async fn history_aggregates_steps_crossing_metadata_changes() {
     let (config, mock, task) = mock().await;
     mock.mode.store(6, Ordering::SeqCst);
     let upstream = Prometheus::new(config, inventory(yaml()).unwrap()).unwrap();
-    for period in ["hour", "day", "month"] {
+    for period in ["day", "month"] {
         let value: Value =
-            serde_json::from_slice(&upstream.history(3000000.0, period).await.unwrap()).unwrap();
+            serde_json::from_slice(&upstream.history(3000000.0, period, 15).await.unwrap())
+                .unwrap();
         let service = &value["services"][0];
-        let bucket = &service["buckets"][0];
-        assert_eq!(bucket["samples"], 3);
-        assert_eq!(bucket["observed_success_ratio"], 1.0 / 3.0);
+        let segment = &service["segments"][0];
+        assert_eq!(segment["state"], "down");
+        assert_eq!(segment["samples"], 3);
+        assert_eq!(segment["failures"], 2);
+        assert!(segment["last_http_status_code"].is_null());
         assert_eq!(service["observed_success_ratio"], 1.0 / 3.0);
-        assert!(bucket["last_http_status_code"].is_null());
-        assert_eq!(service["buckets"][1]["samples"], 0);
+        assert_eq!(service["segments"][1]["state"], "unknown");
     }
     task.abort();
 }
@@ -538,7 +699,10 @@ async fn cached_http_and_failure_retention() {
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         while {
             let cache = state.snapshots.read().unwrap();
-            cache.current.is_none() || cache.day.is_none() || cache.month.is_none()
+            cache.current.is_none()
+                || cache.hour.is_none()
+                || cache.day.is_none()
+                || cache.month.is_none()
         } {
             tokio::task::yield_now().await;
         }
@@ -594,7 +758,7 @@ async fn history_failure_does_not_block_current_and_upstream_limits_apply() {
     let (mut config, mock, task) = mock().await;
     mock.fail_history.store(true, Ordering::SeqCst);
     let upstream = Prometheus::new(config.clone(), inventory(yaml()).unwrap()).unwrap();
-    assert!(upstream.history(100000.0, "day").await.is_err());
+    assert!(upstream.history(100000.0, "day", 15).await.is_err());
     assert!(upstream.current(100000.0).await.is_ok());
     config.prometheus.max_response_bytes = 32;
     let limited = Prometheus::new(config.clone(), inventory(yaml()).unwrap()).unwrap();

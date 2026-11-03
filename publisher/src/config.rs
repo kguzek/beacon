@@ -65,30 +65,40 @@ impl Default for Server {
 #[serde(default, deny_unknown_fields)]
 pub struct Refresh {
     pub current_seconds: u64,
-    pub hour_seconds: u64,
+    /// Defaults to the scrape interval (at least 10 seconds), so each refresh
+    /// adds roughly one new probe to the hour view.
+    pub hour_seconds: Option<u64>,
     pub day_seconds: u64,
     pub month_seconds: u64,
     pub stale_seconds: u64,
-    pub scrape_seconds: u64,
-    pub hour_bucket_seconds: u64,
-    pub day_bucket_seconds: u64,
-    pub month_bucket_seconds: u64,
+    /// Blackbox scrape interval. Detected from Prometheus at startup when unset.
+    pub scrape_seconds: Option<u64>,
+    /// State-timeline resolution for the day and month views.
+    pub day_step_seconds: u64,
+    pub month_step_seconds: u64,
 }
 impl Default for Refresh {
     fn default() -> Self {
         Self {
             current_seconds: 30,
-            hour_seconds: 30,
+            hour_seconds: None,
             day_seconds: 300,
             month_seconds: 1800,
             stale_seconds: 120,
-            scrape_seconds: 30,
-            hour_bucket_seconds: 30,
-            day_bucket_seconds: 900,
-            month_bucket_seconds: 21600,
+            scrape_seconds: None,
+            day_step_seconds: 60,
+            month_step_seconds: 1800,
         }
     }
 }
+impl Refresh {
+    pub fn hour_interval(&self, scrape_seconds: u64) -> u64 {
+        self.hour_seconds.unwrap_or(scrape_seconds.max(10))
+    }
+}
+/// Prometheus rejects range queries with more than 11,000 points per series.
+pub const MAX_STEPS: u64 = 10_000;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Service {
     pub id: String,
@@ -257,30 +267,28 @@ impl Config {
         let r = &self.refresh;
         ensure!(
             [
-                r.current_seconds,
+                Some(r.current_seconds),
                 r.hour_seconds,
-                r.day_seconds,
-                r.month_seconds
+                Some(r.day_seconds),
+                Some(r.month_seconds)
             ]
             .iter()
+            .flatten()
             .all(|s| (1..=86400).contains(s)),
             "invalid refresh interval"
         );
         ensure!(
-            (1..=3600).contains(&r.scrape_seconds) && (1..=86400).contains(&r.stale_seconds),
+            r.scrape_seconds.is_none_or(|s| (1..=3600).contains(&s))
+                && (1..=86400).contains(&r.stale_seconds),
             "invalid freshness/scrape interval"
         );
-        for (window, bucket) in [
-            (3600, r.hour_bucket_seconds),
-            (86400, r.day_bucket_seconds),
-            (2592000, r.month_bucket_seconds),
-        ] {
+        for (window, step) in [(86400, r.day_step_seconds), (2592000, r.month_step_seconds)] {
             ensure!(
-                bucket >= r.scrape_seconds
-                    && bucket <= window
-                    && window % bucket == 0
-                    && window / bucket <= 1000,
-                "invalid history bucket width"
+                step > 0
+                    && step >= r.scrape_seconds.unwrap_or(1)
+                    && window % step == 0
+                    && window / step <= MAX_STEPS,
+                "invalid history step width"
             );
         }
         Ok(())

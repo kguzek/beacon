@@ -7,6 +7,7 @@ import {
   endpoint,
   fetchJson,
   historySchema,
+  normalizeHistory,
   settingsSchema,
   visibleInventory,
   healthSummary,
@@ -140,8 +141,10 @@ async function refresh(
       );
       if (value.location.id !== observer.config.id)
         throw new Error("Observer identity mismatch");
-      observer[kind] = markRaw(value);
-      delay = polling.nextDelay(value, Date.now() / 1000);
+      const history = normalizeHistory(value);
+      observer[kind] = markRaw(history);
+      polling.useInterval(history.refresh_seconds);
+      delay = polling.nextDelay(history, Date.now() / 1000);
     }
   } catch {
     if (kind === "current") observer.reachable = false;
@@ -163,13 +166,16 @@ function status(observer: Observer, service: Observation) {
     now.value,
   );
 }
-function history(observer: Observer, id: string) {
+function historySnapshot(observer: Observer) {
   const snapshot = observer[period.value];
   return snapshot &&
     snapshot.expires_at > now.value &&
     snapshot.generated_at <= now.value + 5
-    ? snapshot.services.find((s) => s.id === id)
+    ? snapshot
     : undefined;
+}
+function history(observer: Observer, id: string) {
+  return historySnapshot(observer)?.services.find((s) => s.id === id);
 }
 function percent(value: number | null | undefined) {
   return value == null ? "—" : `${(value * 100).toFixed(2)}%`;
@@ -571,8 +577,8 @@ onUnmounted(() => {
                         >
                       </div>
                       <HistoryBar
-                        :buckets="history(observer, service.id)?.buckets"
-                        :bucket-seconds="observer[period]?.bucket_seconds ?? 0"
+                        :snapshot="historySnapshot(observer)"
+                        :service="history(observer, service.id)"
                         :label="`${service.name} · ${observer.config.name}`"
                       />
                     </article>

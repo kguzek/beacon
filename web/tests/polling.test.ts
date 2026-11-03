@@ -47,4 +47,13 @@ describe("snapshot-aligned polling", () => {
     expect(day.nextDelay(snapshot(100, 1000), 217)).toBe(183_500);
     expect(day.nextDelay(snapshot(400.25, 1300), 401)).toBe(300_000);
   });
+
+  it("adopts the refresh cadence a publisher reports", () => {
+    const hour = new SnapshotPollSchedule(30);
+    hour.useInterval(15);
+    expect(hour.failureDelay()).toBe(15_000);
+    expect(hour.nextDelay(snapshot(100, 200), 101)).toBe(14_500);
+    hour.useInterval(undefined);
+    expect(hour.failureDelay()).toBe(15_000);
+  });
 });

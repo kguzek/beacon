@@ -80,7 +80,7 @@ jobs:
 
       - name: Upload browser test results
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v5
         with:
           name: web-playwright
           path: |
@@ -110,51 +110,70 @@ jobs:
 
       - name: Build publisher and web images
         run: |
-          podman build --file publisher/Containerfile --tag localhost/beacon-publisher:ci .
-          podman build --file web/Containerfile --tag localhost/beacon-web:ci .
+          docker build --file publisher/Containerfile --tag localhost/beacon-publisher:ci .
+          docker build --file web/Containerfile --tag localhost/beacon-web:ci .
 
       - name: Start publisher and web containers
         run: |
-          cat > "${RUNNER_TEMP}/locations.json" <<'EOF'
-          {"locations":[{"id":"primary","name":"Primary server","url":"http://localhost:8080"}]}
-          EOF
-          podman network create beacon-ci
-          podman run --detach --name beacon-prometheus \
+          host=localhost
+          if [[ "${DOCKER_HOST:-}" =~ ^tcp://([^:/]+) ]]; then
+            host="${BASH_REMATCH[1]}"
+          fi
+          echo "DOCKER_HOSTNAME=${host}" >> "$GITHUB_ENV"
+
+          docker network create beacon-ci
+
+          docker create --name beacon-prometheus \
             --network beacon-ci --network-alias prometheus \
-            --publish 127.0.0.1:19090:9090 \
-            --volume "${GITHUB_WORKSPACE}/web/tests/fixtures/prometheus.mjs:/prometheus.mjs:ro" \
+            --publish 19090:9090 \
             docker.io/library/node:24-alpine node /prometheus.mjs
-          curl --fail --retry 30 --retry-delay 1 --retry-all-errors http://localhost:19090/api/v1/query
-          podman run --detach --name beacon-publisher \
+          docker cp web/tests/fixtures/prometheus.mjs beacon-prometheus:/prometheus.mjs
+          docker start beacon-prometheus
+          curl --fail --retry 30 --retry-delay 1 --retry-all-errors "http://${host}:19090/api/v1/query"
+
+          config="${RUNNER_TEMP}/publisher"
+          mkdir -p "${config}/etc/beacon"
+          cp examples/config.toml examples/services.yaml "${config}/etc/beacon/"
+          cat > "${config}/etc/beacon/ci.toml" <<EOF
+          [server]
+          allowed_origins = ["http://${host}:8081"]
+          EOF
+          docker create --name beacon-publisher \
             --network beacon-ci \
-            --publish 127.0.0.1:8080:8080 \
-            --volume "${GITHUB_WORKSPACE}/examples/config.toml:/etc/beacon/config.toml:ro" \
-            --volume "${GITHUB_WORKSPACE}/examples/services.yaml:/etc/beacon/services.yaml:ro" \
-            localhost/beacon-publisher:ci
-          podman run --detach --name beacon-web \
-            --publish 127.0.0.1:8081:8080 \
-            --volume "${RUNNER_TEMP}/locations.json:/srv/locations.json:ro" \
+            --publish 8080:8080 \
+            localhost/beacon-publisher:ci \
+            --config.path /etc/beacon/config.toml --config.path /etc/beacon/ci.toml
+          tar -C "${config}" -cf - etc | docker cp - beacon-publisher:/
+          docker start beacon-publisher
+
+          cat > "${RUNNER_TEMP}/locations.json" <<EOF
+          {"locations":[{"id":"primary","name":"Primary server","url":"http://${host}:8080"}]}
+          EOF
+          docker create --name beacon-web \
+            --publish 8081:8080 \
             localhost/beacon-web:ci
-          curl --fail --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8080/healthz
-          curl --fail --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8080/v1/current
-          curl --fail --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8081/
+          docker cp "${RUNNER_TEMP}/locations.json" beacon-web:/srv/locations.json
+          docker start beacon-web
+
+          curl --fail --retry 30 --retry-delay 1 --retry-all-errors "http://${host}:8080/healthz"
+          curl --fail --retry 30 --retry-delay 1 --retry-all-errors "http://${host}:8080/v1/current"
+          curl --fail --retry 30 --retry-delay 1 --retry-all-errors "http://${host}:8081/"
 
       - name: Run live publisher contract test
         env:
           BEACON_LIVE: "1"
-          BEACON_WEB_URL: http://localhost:8081
-        run: pnpm test:e2e live.spec.ts --forbid-only --workers=1 --reporter=html --trace=retain-on-failure
+        run: BEACON_WEB_URL="http://${DOCKER_HOSTNAME}:8081" pnpm test:e2e live.spec.ts --forbid-only --workers=1 --reporter=html --trace=retain-on-failure
 
       - name: Collect container logs
         if: ${{ !cancelled() }}
         run: |
-          podman logs beacon-publisher > "${RUNNER_TEMP}/publisher.log" 2>&1 || true
-          podman logs beacon-web > "${RUNNER_TEMP}/web.log" 2>&1 || true
-          podman logs beacon-prometheus > "${RUNNER_TEMP}/prometheus.log" 2>&1 || true
+          docker logs beacon-publisher > "${RUNNER_TEMP}/publisher.log" 2>&1 || true
+          docker logs beacon-web > "${RUNNER_TEMP}/web.log" 2>&1 || true
+          docker logs beacon-prometheus > "${RUNNER_TEMP}/prometheus.log" 2>&1 || true
 
       - name: Upload integration test results
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v5
         with:
           name: web-publisher-integration
           path: |
@@ -168,5 +187,5 @@ jobs:
       - name: Stop containers
         if: ${{ always() }}
         run: |
-          podman rm --force beacon-web beacon-publisher beacon-prometheus || true
-          podman network rm beacon-ci || true
+          docker rm --force beacon-web beacon-publisher beacon-prometheus || true
+          docker network rm beacon-ci || true

@@ -62,15 +62,72 @@ export const currentSchema = z
       context.addIssue({ code: "custom", message: "Duplicate service IDs" });
     }
   });
-export const historySchema = z.object({
+const httpCodeSchema = z.int().min(100).max(599).nullable();
+const historyServiceSchema = serviceSchema.extend({
+  observed_success_ratio: ratioSchema.nullable(),
+  coverage: ratioSchema,
+});
+const historyEnvelope = {
+  location: locationSchema,
+  generated_at: timeSchema,
+  expires_at: timeSchema,
+  window_seconds: z.number().positive(),
+};
+/** Hour view: every real Blackbox probe, one entry per Prometheus scrape. */
+const probeHistorySchema = z.object({
+  schema_version: z.literal(2),
+  kind: z.literal("probes"),
+  ...historyEnvelope,
+  scrape_interval_seconds: z.number().positive(),
+  refresh_seconds: z.number().positive(),
+  services: z
+    .array(
+      historyServiceSchema.extend({
+        probes: z
+          .array(
+            z.object({
+              at: timeSchema,
+              success: z.boolean(),
+              http_status_code: httpCodeSchema,
+            }),
+          )
+          .max(3610),
+      }),
+    )
+    .max(500),
+});
+const segmentSchema = z.object({
+  start: timeSchema,
+  end: timeSchema,
+  state: z.enum(["healthy", "down", "unknown"]),
+  samples: z.int().nonnegative(),
+  failures: z.int().nonnegative(),
+  last_http_status_code: httpCodeSchema,
+});
+/** Day and month views: contiguous runs of one state. */
+const timelineHistorySchema = z.object({
+  schema_version: z.literal(2),
+  kind: z.literal("timeline"),
+  ...historyEnvelope,
+  scrape_interval_seconds: z.number().positive(),
+  refresh_seconds: z.number().positive(),
+  step_seconds: z.number().positive(),
+  services: z
+    .array(
+      historyServiceSchema.extend({
+        segments: z.array(segmentSchema).max(10_000),
+      }),
+    )
+    .max(500),
+});
+/** Older publishers: fixed-width buckets, shown as a timeline. */
+const legacyHistorySchema = z.object({
   ...envelope,
   window_seconds: z.number().positive(),
   bucket_seconds: z.number().positive(),
   services: z
     .array(
-      serviceSchema.extend({
-        observed_success_ratio: ratioSchema.nullable(),
-        coverage: ratioSchema,
+      historyServiceSchema.extend({
         buckets: z
           .array(
             z.object({
@@ -78,12 +135,7 @@ export const historySchema = z.object({
               observed_success_ratio: ratioSchema.nullable(),
               coverage: ratioSchema,
               samples: z.int().nonnegative(),
-              last_http_status_code: z
-                .int()
-                .min(100)
-                .max(599)
-                .nullable()
-                .optional(),
+              last_http_status_code: httpCodeSchema.optional(),
             }),
           )
           .max(1000),
@@ -91,6 +143,113 @@ export const historySchema = z.object({
     )
     .max(500),
 });
+export const historySchema = z.union([
+  probeHistorySchema,
+  timelineHistorySchema,
+  legacyHistorySchema,
+]);
+export type HistoryResponse = z.infer<typeof historySchema>;
+export type ProbeHistory = z.infer<typeof probeHistorySchema>;
+export type TimelineHistory = z.infer<typeof timelineHistorySchema>;
+export type Segment = z.infer<typeof segmentSchema>;
+export type Probe = ProbeHistory["services"][number]["probes"][number];
+export type History = ProbeHistory | TimelineHistory;
+
+/** Map legacy bucket histories onto the timeline model so one renderer suffices. */
+export function normalizeHistory(value: HistoryResponse): History {
+  if (value.schema_version === 2) {
+    return value;
+  }
+  const legacy = value;
+  return {
+    schema_version: 2,
+    kind: "timeline",
+    location: legacy.location,
+    generated_at: legacy.generated_at,
+    expires_at: legacy.expires_at,
+    window_seconds: legacy.window_seconds,
+    scrape_interval_seconds: legacy.bucket_seconds,
+    refresh_seconds:
+      legacy.window_seconds === 3600
+        ? 30
+        : legacy.window_seconds === 86_400
+          ? 300
+          : 1800,
+    step_seconds: legacy.bucket_seconds,
+    services: legacy.services.map(({ buckets, ...service }) => ({
+      ...service,
+      segments: mergeSegments(
+        buckets.map((bucket) => {
+          const state: Segment["state"] =
+            bucket.coverage < 0.8 || bucket.observed_success_ratio == null
+              ? "unknown"
+              : bucket.observed_success_ratio === 1
+                ? "healthy"
+                : "down";
+          return {
+            start: bucket.ends_at - legacy.bucket_seconds,
+            end: bucket.ends_at,
+            state,
+            samples: bucket.samples,
+            failures: Math.round(
+              bucket.samples * (1 - (bucket.observed_success_ratio ?? 1)),
+            ),
+            last_http_status_code: bucket.last_http_status_code ?? null,
+          };
+        }),
+      ),
+    })),
+  };
+}
+/** Merge adjacent segments sharing a state, keeping the latest HTTP code. */
+export function mergeSegments(segments: Segment[]): Segment[] {
+  const merged: Segment[] = [];
+  for (const segment of segments) {
+    const last = merged.at(-1);
+    if (
+      last?.state === segment.state &&
+      Math.abs(last.end - segment.start) < 1e-6
+    ) {
+      last.end = segment.end;
+      last.samples += segment.samples;
+      last.failures += segment.failures;
+      last.last_http_status_code =
+        segment.last_http_status_code ?? last.last_http_status_code;
+    } else {
+      merged.push({ ...segment });
+    }
+  }
+  return merged;
+}
+/** One slot per expected check: real probes, plus placeholders for missed ones. */
+export type ProbeSlot =
+  { kind: "probe"; at: number; probe: Probe } | { kind: "missed"; at: number };
+export function probeSlots(
+  probes: Probe[],
+  start: number,
+  end: number,
+  interval: number,
+): ProbeSlot[] {
+  const slots: ProbeSlot[] = [];
+  // A gap of 1.5 intervals or more means at least one expected check is missing.
+  const fill = (from: number, to: number) => {
+    const missing = Math.floor((to - from) / interval - 0.5);
+    for (let index = 1; index <= missing; index++) {
+      slots.push({ kind: "missed", at: from + index * interval });
+    }
+  };
+  let previous = start;
+  for (const probe of probes) {
+    if (probe.at <= start || probe.at > end) {
+      continue;
+    }
+    fill(previous, probe.at);
+    slots.push({ kind: "probe", at: probe.at, probe });
+    previous = probe.at;
+  }
+  fill(previous, end);
+  return slots;
+}
 export const settingsSchema = z
   .object({
     title: z.string().default("Service status"),
@@ -116,7 +275,6 @@ export const settingsSchema = z
   );
 export type Current = z.infer<typeof currentSchema>;
 export type Observation = Current["services"][number];
-export type History = z.infer<typeof historySchema>;
 export type LocationConfig = z.infer<
   typeof settingsSchema
 >["locations"][number];

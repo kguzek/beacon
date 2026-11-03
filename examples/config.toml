@@ -21,9 +21,10 @@ cache_seconds = 15
 current_seconds = 30
 day_seconds = 300
 month_seconds = 1800
-hour_seconds = 30
-hour_bucket_seconds = 30
+# hour_seconds defaults to the scrape interval (at least 10 seconds).
+# hour_seconds = 15
 stale_seconds = 120
-scrape_seconds = 30
-day_bucket_seconds = 900
-month_bucket_seconds = 21600
+# scrape_seconds is detected from Prometheus at startup; set it to skip detection.
+# scrape_seconds = 15
+day_step_seconds = 60
+month_step_seconds = 1800
