@@ -221,6 +221,26 @@ h1 {
 .notice.neutral p {
   color: #a1adbf;
 }
+/* Mixed: green and red halves split diagonally, top right to bottom left. */
+.notice.mixed {
+  border-color: transparent;
+  background:
+    linear-gradient(
+        to bottom right,
+        #13251f calc(50% - 0.5px),
+        #2b171c calc(50% + 0.5px)
+      )
+      padding-box,
+    linear-gradient(
+        to bottom right,
+        #284b3d calc(50% - 0.5px),
+        #70333f calc(50% + 0.5px)
+      )
+      border-box;
+}
+.notice.mixed p {
+  color: #b8b0b4;
+}
 .overview.danger {
   display: flex;
 }
@@ -394,6 +414,19 @@ kbd,
   padding: 2px 6px;
   border: 1px solid currentColor;
   border-radius: 5px;
+}
+/* Mixed badge: border split green/red like the mixed banner. */
+.group-state.mixed {
+  color: #d5d9e1;
+  border-color: transparent;
+  background:
+    linear-gradient(#0c1018, #0c1018) padding-box,
+    linear-gradient(
+        to bottom right,
+        #7dd3b0 calc(50% - 0.5px),
+        #fa8796 calc(50% + 0.5px)
+      )
+      border-box;
 }
 .danger {
   background: #2b171c;
@@ -712,19 +745,26 @@ h4 {
   margin: 0;
   text-transform: capitalize;
 }
+/* Empty slot in place of the strip: same footprint, clearly "no data". */
 .no-history {
-  font-size: 10px;
-  color: #74829a;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #364052;
+  border-radius: 4px;
   background: repeating-linear-gradient(
-    90deg,
-    #293141 0,
-    #293141 5px,
-    transparent 5px,
-    transparent 8px
+    -45deg,
+    #ffffff05 0,
+    #ffffff05 6px,
+    transparent 6px,
+    transparent 12px
   );
-  width: 100%;
-  text-align: center;
-  border-radius: 2px;
+  color: #7f8da3;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .observer-warning {
   padding: 8px 12px;

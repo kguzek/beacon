@@ -326,8 +326,8 @@ test("search reveals collapsed groups without changing full health summaries or 
   const overview = page.getByRole("region", {
     name: "Service health overview",
   });
-  await expect(overview).toContainText("Partial outage");
-  await expect(overview).toContainText("2 online · 1 down · 1 unknown");
+  await expect(overview).toContainText("Service status mixed");
+  await expect(overview).toContainText("2 online · 1 mixed · 1 unknown");
   await expect(page.locator(".service")).toHaveCount(4);
   await expect(page.locator(".service-group")).toHaveCount(3);
   await expect(page.locator(".group-heading").first()).toContainText(
@@ -362,20 +362,17 @@ test("search reveals collapsed groups without changing full health summaries or 
   ).toBe(true);
   await expect(group).toHaveAttribute("aria-expanded", "false");
   await expect(page.locator(".service")).toHaveCount(2);
-  await expect(container.locator(".group-summary")).toHaveText("1 down");
+  await expect(container.locator(".group-summary")).toHaveText("1 mixed");
   expect((await container.boundingBox())!.height).toBeLessThanOrEqual(48);
-  const downBadge = container.getByText("1 down", { exact: true });
-  await downBadge.hover();
+  const mixedBadge = container.getByText("1 mixed", { exact: true });
+  await mixedBadge.hover();
   await expect(page.getByRole("tooltip")).toContainText(
-    "1 online · 1 down. Service Prometheus is currently down.",
-  );
-  await expect(page.getByRole("tooltip")).toContainText(
-    "Availability may vary by location.",
+    "1 online · 1 mixed. Service Prometheus is observed healthy by primary but its status is unhealthy at secondary.",
   );
   await expect(group).toHaveAttribute("aria-expanded", "false");
   await page.locator(".intro").hover();
   await expect(page.getByRole("tooltip")).toHaveCount(0);
-  await downBadge.focus();
+  await mixedBadge.focus();
   await expect(page.getByRole("tooltip")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("tooltip")).toHaveCount(0);
@@ -407,9 +404,9 @@ test("search reveals collapsed groups without changing full health summaries or 
   await expect(page.getByRole("status")).toHaveText("1 of 4 services");
   await expect(group).toHaveAttribute("aria-expanded", "true");
   await expect(group).toContainText("1 matches / 2 services");
-  await expect(container.locator(".group-summary")).toHaveText("1 down");
+  await expect(container.locator(".group-summary")).toHaveText("1 mixed");
   await expect(page.locator(".service")).toHaveCount(1);
-  await expect(overview).toContainText("2 online · 1 down · 1 unknown");
+  await expect(overview).toContainText("2 online · 1 mixed · 1 unknown");
   await page.keyboard.press("Meta+k");
   await expect(search).toBeFocused();
   expect(
@@ -433,7 +430,7 @@ test("search reveals collapsed groups without changing full health summaries or 
   await expect(search).toHaveValue("");
   await expect(group).toHaveAttribute("aria-expanded", "false");
   await page.getByRole("button", { name: "24 hours" }).click();
-  await expect(overview).toContainText("2 online · 1 down · 1 unknown");
+  await expect(overview).toContainText("2 online · 1 mixed · 1 unknown");
   await page.setViewportSize({ width: 375, height: 900 });
   await expect(container.locator(".group-summary")).toBeVisible();
   expect(

@@ -248,8 +248,11 @@ onUnmounted(() => {
         v-else
         class="notice overview"
         :class="{
-          danger: !loading && summary.down > 0,
-          neutral: loading || (summary.unknown > 0 && summary.down === 0),
+          mixed: !loading && summary.isMixed,
+          danger: !loading && !summary.isMixed && summary.down > 0,
+          neutral:
+            loading ||
+            (!summary.isMixed && summary.unknown > 0 && summary.down === 0),
         }"
         aria-label="Service health overview"
       >
@@ -282,7 +285,7 @@ onUnmounted(() => {
               >
             </template>
           </p>
-          <p v-if="!loading && summary.down > 0">
+          <p v-if="!loading && (summary.isMixed || summary.down > 0)">
             Availability may vary by location.
           </p>
         </div>
@@ -439,7 +442,20 @@ onUnmounted(() => {
                 v-if="group.summary[state.id] > 0"
                 class="group-state"
                 :class="state.id"
-                :description="`${group.summary.breakdown}. ${group.summary.description} ${groupDescriptions[state.id]}`"
+                :description="
+                  [
+                    // The badge already says e.g. “2 mixed”; don’t repeat it.
+                    state.id === 'mixed' &&
+                    group.summary.breakdown ===
+                      `${group.summary.mixed} ${state.label}`
+                      ? ''
+                      : `${group.summary.breakdown}.`,
+                    group.summary.description,
+                    groupDescriptions[state.id],
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                "
                 >{{ group.summary[state.id] }} {{ state.label }}</StateTooltip
               >
             </template>

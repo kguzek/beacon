@@ -7,6 +7,7 @@ export const serviceDescriptions = {
 
 export const combinedDescriptions = {
   healthy: "Every monitoring location recently found the service working.",
+  mixed: "",
   down: "At least one location recently found a problem. Availability may vary by location.",
   unknown:
     "We don’t have enough recent results to confirm the service’s status.",
@@ -15,6 +16,7 @@ export const combinedDescriptions = {
 export const groupDescriptions = {
   healthy:
     "Every service in this group was recently confirmed working from every monitoring location.",
+  mixed: "",
   down: "These services have a recent reported problem from at least one location. Availability may vary by location.",
   unknown:
     "These services are missing recent results, so we can’t confirm their status.",

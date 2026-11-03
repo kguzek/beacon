@@ -335,18 +335,34 @@ export function visibleInventory(observers: Observer[]): Observation[] {
     .filter((item) => !hidden.has(item.id))
     .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
+export type HealthState = Observation["status"] | "mixed";
+// Locations still connecting haven't reported yet, so they don't count either way.
+function reportingObservers(observers: Observer[]) {
+  return observers.filter((observer) => !observer.loading);
+}
+function observedStatus(observer: Observer, id: string, now: number) {
+  return effectiveStatus(
+    observer.current?.services.find((service) => service.id === id),
+    observer.current,
+    now,
+  );
+}
+// Mixed: at least one reachable location found the service working, while
+// another is unreachable or found it down or unknown.
 export function combinedStatus(
   id: string,
   observers: Observer[],
   now: number,
-): Observation["status"] {
-  const states = observers.map((observer) =>
-    effectiveStatus(
-      observer.current?.services.find((service) => service.id === id),
-      observer.current,
-      now,
-    ),
+): HealthState {
+  const reporting = reportingObservers(observers);
+  const confirmed = reporting.map(
+    (observer) =>
+      observer.reachable && observedStatus(observer, id, now) === "healthy",
   );
+  if (confirmed.some(Boolean) && !confirmed.every(Boolean)) {
+    return "mixed";
+  }
+  const states = observers.map((observer) => observedStatus(observer, id, now));
   if (states.includes("down")) {
     return "down";
   }
@@ -356,29 +372,74 @@ export function combinedStatus(
 }
 export const healthStates = [
   { id: "healthy", label: "online" },
+  { id: "mixed", label: "mixed" },
   { id: "down", label: "down" },
   { id: "unknown", label: "unknown" },
 ] as const;
 
-function describeServices(
-  names: string[],
-  state: (typeof healthStates)[number]["id"],
-) {
+function list(items: string[]) {
+  return new Intl.ListFormat("en", {
+    style: "long",
+    type: "conjunction",
+  }).format(items);
+}
+function describeServices(names: string[], state: Observation["status"]) {
   if (names.length === 0) {
     return "";
   }
   if (state === "healthy") {
     return "";
   }
-  const list = new Intl.ListFormat("en", {
-    style: "long",
-    type: "conjunction",
-  }).format(names);
-  const subject = `${names.length === 1 ? "Service" : "Services"} ${list}`;
+  const subject = `${names.length === 1 ? "Service" : "Services"} ${list(names)}`;
   const verb = names.length === 1 ? "is" : "are";
   return state === "unknown"
     ? `${subject} ${names.length === 1 ? "has an unknown status" : "have an unknown status"}.`
     : `${subject} ${verb} currently down.`;
+}
+
+// Names the locations involved when every mixed service splits the same way,
+// e.g. "… observed healthy by HP but their status is unavailable at Pi."
+function describeMixed(
+  services: Observation[],
+  observers: Observer[],
+  now: number,
+  total: number,
+) {
+  const splits = services.map((service) => {
+    const healthy: string[] = [];
+    const other: string[] = [];
+    const kinds = new Set<string>();
+    for (const observer of reportingObservers(observers)) {
+      const state = observedStatus(observer, service.id, now);
+      if (state === "healthy" && observer.reachable) {
+        healthy.push(observer.config.name);
+      } else {
+        other.push(observer.config.name);
+        kinds.add(
+          state === "down" && observer.reachable ? "unhealthy" : "unavailable",
+        );
+      }
+    }
+    return { healthy: list(healthy), other: list(other), kinds };
+  });
+  const [first] = splits;
+  if (first === undefined) {
+    return "";
+  }
+  const isPlural = services.length > 1;
+  const subject =
+    isPlural && services.length === total
+      ? "All services"
+      : `${isPlural ? "Services" : "Service"} ${list(services.map((service) => service.name))}`;
+  const isSameSplit = splits.every(
+    (split) => split.healthy === first.healthy && split.other === first.other,
+  );
+  const kinds = [...new Set(splits.flatMap((split) => [...split.kinds]))];
+  const kind = kinds.length === 1 ? kinds.join("") : "unhealthy or unavailable";
+  const [verb, possessive] = isPlural ? ["are", "their"] : ["is", "its"];
+  return isSameSplit
+    ? `${subject} ${verb} observed healthy by ${first.healthy} but ${possessive} status is ${kind} at ${first.other}.`
+    : `${subject} ${verb} observed healthy by some locations but ${possessive} status is ${kind} at others.`;
 }
 
 export function healthSummary(
@@ -386,20 +447,43 @@ export function healthSummary(
   observers: Observer[],
   now: number,
 ) {
-  const counts = { healthy: 0, down: 0, unknown: 0 };
-  const names: Record<Observation["status"], string[]> = {
+  const counts: Record<HealthState, number> = {
+    healthy: 0,
+    mixed: 0,
+    down: 0,
+    unknown: 0,
+  };
+  const names: Record<HealthState, string[]> = {
     healthy: [],
+    mixed: [],
     down: [],
     unknown: [],
   };
+  const mixed: Observation[] = [];
   for (const service of services) {
     const state = combinedStatus(service.id, observers, now);
     counts[state]++;
     names[state].push(service.name);
+    if (state === "mixed") {
+      mixed.push(service);
+    }
   }
   const total = services.length;
-  const headline =
-    total === 0 || counts.unknown === total
+  // Scope-wide mixed: some location confirms every service in scope working
+  // while another is unreachable or reports something that isn't working.
+  const allHealthyFrom = reportingObservers(observers).map(
+    (observer) =>
+      observer.reachable &&
+      total > 0 &&
+      services.every(
+        (service) => observedStatus(observer, service.id, now) === "healthy",
+      ),
+  );
+  const isMixed =
+    allHealthyFrom.some(Boolean) && !allHealthyFrom.every(Boolean);
+  const headline = isMixed
+    ? "Service status mixed"
+    : total === 0 || counts.unknown === total
       ? "Service status unavailable"
       : counts.healthy === total
         ? "All services online"
@@ -407,15 +491,19 @@ export function healthSummary(
           ? "All services down"
           : counts.down > 0
             ? "Partial outage"
-            : "Service status incomplete";
-  const descriptions = {
+            : counts.mixed > 0
+              ? "Service status mixed"
+              : "Service status incomplete";
+  const descriptions: Record<HealthState, string> = {
     healthy: describeServices(names.healthy, "healthy"),
+    mixed: describeMixed(mixed, observers, now, total),
     down: describeServices(names.down, "down"),
     unknown: describeServices(names.unknown, "unknown"),
   };
   return {
     ...counts,
     headline,
+    isMixed: headline === "Service status mixed",
     descriptions,
     description: healthStates
       .map((state) => descriptions[state.id])

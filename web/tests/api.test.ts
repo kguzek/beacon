@@ -110,17 +110,30 @@ describe("public contract and presentation", () => {
       ).toBe(false);
     }
   });
-  it("aggregates every configured observer, retaining fresh failures and successes during outages", () => {
+  it("aggregates every configured observer, marking disagreement between locations as mixed", () => {
     const first = observer("primary", snapshot());
     const second = observer("secondary", snapshot("secondary"));
-    expect(combinedStatus("example.org", [first, second], 150)).toBe("healthy");
-    second.reachable = false;
-    expect(combinedStatus("example.org", [first, second], 150)).toBe("healthy");
+    const status = (now = 150) =>
+      combinedStatus("example.org", [first, second], now);
+    expect(status()).toBe("healthy");
     second.current!.services[0]!.status = "down";
-    expect(combinedStatus("example.org", [first, second], 150)).toBe("down");
-    expect(combinedStatus("example.org", [first, second], 191)).toBe("unknown");
+    expect(status()).toBe("mixed");
+    second.current!.services[0]!.status = "unknown";
+    expect(status()).toBe("mixed");
+    second.current!.services[0]!.status = "healthy";
+    second.reachable = false;
+    expect(status()).toBe("mixed");
+    second.loading = true;
+    expect(status()).toBe("healthy");
+    second.loading = false;
+    second.reachable = true;
+    first.current!.services[0]!.status = "down";
+    second.current!.services[0]!.status = "down";
+    expect(status()).toBe("down");
+    expect(status(191)).toBe("unknown");
     second.current = null;
-    expect(combinedStatus("example.org", [first, second], 150)).toBe("unknown");
+    second.reachable = false;
+    expect(status()).toBe("down");
     expect(combinedStatus("example.org", [], 150)).toBe("unknown");
   });
   it("distinguishes empty, unknown, incomplete and outage summaries without hidden services", () => {
@@ -152,6 +165,68 @@ describe("public contract and presentation", () => {
     expect(healthSummary([], observers, 150).headline).toBe(
       "Service status unavailable",
     );
+  });
+  it("reports mixed status when one location is all healthy and another is not", () => {
+    const primary = snapshot();
+    const secondary = snapshot("secondary");
+    const observers = [
+      observer("primary", primary),
+      observer("secondary", secondary),
+    ];
+    const summary = () =>
+      healthSummary(visibleInventory(observers), observers, 150).headline;
+    expect(summary()).toBe("All services online");
+    secondary.services[0]!.status = "down";
+    expect(summary()).toBe("Service status mixed");
+    secondary.services[0]!.status = "unknown";
+    expect(summary()).toBe("Service status mixed");
+    secondary.services[0]!.status = "healthy";
+    observers[1]!.reachable = false;
+    expect(summary()).toBe("Service status mixed");
+    expect(
+      healthSummary(visibleInventory(observers), observers, 150).descriptions
+        .mixed,
+    ).toBe(
+      "Service Example is observed healthy by primary but its status is unavailable at secondary.",
+    );
+    primary.services[0]!.status = "down";
+    expect(summary()).toBe("All services down");
+  });
+  it("counts services that only some locations confirm as mixed, per group", () => {
+    const primary = snapshot();
+    const secondary = snapshot("secondary");
+    for (const current of [primary, secondary])
+      current.services.push({
+        ...current.services[0]!,
+        id: "second.org",
+        name: "Second",
+      });
+    primary.services[0]!.status = "down";
+    secondary.services[2]!.status = "down";
+    const observers = [
+      observer("primary", primary),
+      observer("secondary", secondary),
+    ];
+    const services = visibleInventory(observers);
+    expect(healthSummary(services, observers, 150)).toMatchObject({
+      headline: "Service status mixed",
+      isMixed: true,
+      mixed: 2,
+      breakdown: "2 mixed",
+      descriptions: {
+        mixed:
+          "All services are observed healthy by some locations but their status is unhealthy at others.",
+      },
+    });
+    const second = services.filter((service) => service.id === "second.org");
+    expect(healthSummary(second, observers, 150)).toMatchObject({
+      headline: "Service status mixed",
+      mixed: 1,
+      descriptions: {
+        mixed:
+          "Service Second is observed healthy by primary but its status is unhealthy at secondary.",
+      },
+    });
   });
   it("names every service in each state, including plural lists, without hidden services", () => {
     const current = snapshot();
