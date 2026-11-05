@@ -17,11 +17,16 @@ pub struct Config {
     #[serde(default)]
     pub refresh: Refresh,
 }
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Location {
     pub id: String,
     pub name: String,
+}
+impl From<Location> for beacon_api::Location {
+    fn from(Location { id, name }: Location) -> Self {
+        Self { id, name }
+    }
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,16 +104,20 @@ impl Refresh {
 /// Prometheus rejects range queries with more than 11,000 points per series.
 pub const MAX_STEPS: u64 = 10_000;
 
+/// An inventory entry: public metadata plus the private probe target, which
+/// is used only to match Prometheus series and is never published.
 #[derive(Clone, Debug, Serialize)]
 pub struct Service {
-    pub id: String,
-    pub name: String,
-    pub hidden: bool,
-    pub requires_vpn: bool,
-    pub hosting_location: Option<String>,
-    pub labels: BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub public: beacon_api::Service,
     #[serde(skip)]
     pub target: String,
+}
+impl std::ops::Deref for Service {
+    type Target = beacon_api::Service;
+    fn deref(&self) -> &Self::Target {
+        &self.public
+    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -183,12 +192,14 @@ pub fn inventory(yaml: &str) -> Result<Vec<Service>> {
                 "invalid hosting location"
             );
             result.push(Service {
-                id,
-                name,
-                hidden,
-                requires_vpn,
-                hosting_location,
-                labels: labels.clone(),
+                public: beacon_api::Service {
+                    id,
+                    name,
+                    hidden,
+                    requires_vpn,
+                    hosting_location,
+                    labels: labels.clone(),
+                },
                 target,
             });
         }

@@ -5,7 +5,8 @@ on:
     branches:
       - main
     paths:
-      - publisher/**
+      - apps/publisher/**
+      - crates/**
       - Cargo.toml
       - Cargo.lock
       - Cross.toml
@@ -40,7 +41,7 @@ jobs:
         if: matrix.arch == 'amd64'
         run: |
           docker build \
-            --file publisher/Containerfile \
+            --file apps/publisher/Containerfile \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --tag "${IMAGE}:${GITHUB_SHA}-amd64" \
@@ -107,7 +108,7 @@ jobs:
           cp target/armv7-unknown-linux-musleabihf/release/beacon-publisher "$context/beacon-publisher"
           docker build \
             --platform linux/arm/v7 \
-            --file publisher/Containerfile.armv7 \
+            --file apps/publisher/Containerfile.armv7 \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --tag "${IMAGE}:${GITHUB_SHA}-armv7" \

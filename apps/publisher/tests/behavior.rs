@@ -32,7 +32,7 @@ fn yaml() -> &'static str {
 "#
 }
 fn config() -> Config {
-    toml::from_str(include_str!("../../examples/config.toml")).unwrap()
+    toml::from_str(include_str!("../../../examples/config.toml")).unwrap()
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn startup_only_and_required_files() {
     let path = dir.path().join("config.toml");
     assert!(Config::load(&path).is_err());
     let services = dir.path().join("services.yaml");
-    let toml = include_str!("../../examples/config.toml")
+    let toml = include_str!("../../../examples/config.toml")
         .replace("/etc/beacon/services.yaml", services.to_str().unwrap());
     std::fs::write(&path, &toml).unwrap();
     assert!(Config::load(&path).is_err());
@@ -159,7 +159,7 @@ fn startup_only_and_required_files() {
     assert!(
         toml::from_str::<Config>(&format!(
             "{}\nhour_bucket_seconds = 30",
-            include_str!("../../examples/config.toml")
+            include_str!("../../../examples/config.toml")
         ))
         .is_err()
     );

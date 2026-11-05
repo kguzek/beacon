@@ -1,4 +1,4 @@
-name: CI / Publisher
+name: CI / Rust
 
 on:
   push:
@@ -46,7 +46,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: publisher-clippy
+          shared-key: rust-clippy
 
       - name: Run Clippy
         run: cargo +1.96.0 clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -64,7 +64,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: publisher-test
+          shared-key: rust-test
 
       - name: Run unit, integration, and documentation tests
         run: cargo +1.96.0 test --locked --workspace --all-features
@@ -82,7 +82,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: publisher-release
+          shared-key: rust-release
 
       - name: Build release binary
-        run: cargo +1.96.0 build --locked --release -p beacon-publisher
+        run: cargo +1.96.0 build --locked --release --workspace

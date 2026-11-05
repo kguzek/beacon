@@ -19,12 +19,13 @@ The page itself is entirely static, so it can live on a CDN or any static hostin
 
 ## Repository
 
-- `web/` — the public status page.
-- `publisher/` — the status API deployed at each monitoring location.
+- `apps/web/` — the public status page.
+- `apps/publisher/` — the status API deployed at each monitoring location.
+- `crates/beacon-api/` — the API's wire types, shared by the publisher and Rust clients.
 - `examples/` — sample publisher configuration and service inventory.
 - `compose.yaml` — a deployment template for the publisher.
 
-To use Beacon, configure each publisher with its Prometheus address and shared service inventory, then copy `locations.example.json` to `web/public/locations.json` (which is ignored by Git) and add the public publisher URLs. Build the page with `pnpm build` and deploy `web/dist/` to your static host.
+To use Beacon, configure each publisher with its Prometheus address and shared service inventory, then copy `locations.example.json` to `apps/web/public/locations.json` (which is ignored by Git) and add the public publisher URLs. Build the page with `pnpm build` and deploy `apps/web/dist/` to your static host.
 
 See the [API documentation](docs/API.md) for configuration options and response formats.
 
