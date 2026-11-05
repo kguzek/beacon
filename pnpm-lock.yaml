@@ -201,7 +201,7 @@ importers:
         specifier: ^3.6.2
         version: 3.9.10
 
-  web:
+  apps/web:
     dependencies:
       vue:
         specifier: ^3.5.22

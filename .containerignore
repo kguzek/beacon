@@ -9,3 +9,5 @@ services.yaml
 blackbox-http.yaml
 .env*
 test-results
+apps/macos
+**/.build

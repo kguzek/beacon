@@ -200,7 +200,7 @@ impl Prometheus {
                     None
                 };
                 CurrentService {
-                    service: s.clone(),
+                    service: s.public.clone(),
                     status,
                     observed_at: observed,
                     expires_at: observed.map(|t| t + stale),
@@ -210,7 +210,7 @@ impl Prometheus {
             .collect();
         Ok(serde_json::to_vec(&Current {
             schema_version: 1,
-            location: self.config.location.clone(),
+            location: self.config.location.clone().into(),
             generated_at: now,
             expires_at: now + stale,
             services,
@@ -280,7 +280,7 @@ impl Prometheus {
                     .collect();
                 let successes = probes.iter().filter(|p| p.success).count();
                 HistoryService {
-                    service: s.clone(),
+                    service: s.public.clone(),
                     observed_success_ratio: (!probes.is_empty())
                         .then(|| successes as f64 / probes.len() as f64),
                     coverage: (probes.len() as f64 / expected).min(1.0),
@@ -291,8 +291,8 @@ impl Prometheus {
         let refresh = self.config.refresh.hour_interval(interval);
         Ok(serde_json::to_vec(&History {
             schema_version: 2,
-            kind: "probes",
-            location: self.config.location.clone(),
+            kind: HistoryKind::Probes,
+            location: self.config.location.clone().into(),
             generated_at: now,
             expires_at: now + (refresh * 3) as f64,
             window_seconds: window,
@@ -399,7 +399,7 @@ impl Prometheus {
                     }
                 }
                 HistoryService {
-                    service: s.clone(),
+                    service: s.public.clone(),
                     observed_success_ratio: (total > 0)
                         .then(|| (total - failed) as f64 / total as f64),
                     coverage: (total as f64 / (window as f64 / interval as f64)).min(1.0),
@@ -409,8 +409,8 @@ impl Prometheus {
             .collect();
         Ok(serde_json::to_vec(&History {
             schema_version: 2,
-            kind: "timeline",
-            location: self.config.location.clone(),
+            kind: HistoryKind::Timeline,
+            location: self.config.location.clone().into(),
             generated_at: now,
             expires_at: now + (refresh * 3) as f64,
             window_seconds: window,
