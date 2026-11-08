@@ -1,0 +1,53 @@
+{
+  "description": "empty inventory",
+  "now": 150,
+  "observers": [
+    {
+      "config": {
+        "id": "hp",
+        "name": "HP",
+        "url": "https://beacon-hp.example.org"
+      },
+      "reachable": true,
+      "current": {
+        "schema_version": 1,
+        "location": {
+          "id": "hp",
+          "name": "HP"
+        },
+        "generated_at": 100,
+        "expires_at": 200,
+        "services": []
+      }
+    },
+    {
+      "config": {
+        "id": "pi",
+        "name": "PI",
+        "url": "https://beacon-pi.example.org"
+      },
+      "reachable": true,
+      "current": {
+        "schema_version": 1,
+        "location": {
+          "id": "pi",
+          "name": "PI"
+        },
+        "generated_at": 100,
+        "expires_at": 200,
+        "services": []
+      }
+    }
+  ],
+  "expected": {
+    "services": {},
+    "headline": "Service status unavailable",
+    "counts": {
+      "healthy": 0,
+      "mixed": 0,
+      "down": 0,
+      "unknown": 0
+    },
+    "breakdown": ""
+  }
+}

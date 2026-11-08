@@ -1,0 +1,63 @@
+{
+  "description": "future observation",
+  "now": 150,
+  "observers": [
+    {
+      "config": {
+        "id": "hp",
+        "name": "HP",
+        "url": "https://beacon-hp.example.org"
+      },
+      "reachable": true,
+      "current": {
+        "schema_version": 1,
+        "location": {
+          "id": "hp",
+          "name": "HP"
+        },
+        "generated_at": 100,
+        "expires_at": 200,
+        "services": [
+          {
+            "id": "alpha.org",
+            "name": "Alpha",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "healthy",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          },
+          {
+            "id": "beta.org",
+            "name": "Beta",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "down",
+            "observed_at": 156,
+            "expires_at": 276,
+            "duration_seconds": 0.1
+          }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "services": {
+      "alpha.org": "healthy",
+      "beta.org": "unknown"
+    },
+    "headline": "Service status incomplete",
+    "counts": {
+      "healthy": 1,
+      "mixed": 0,
+      "down": 0,
+      "unknown": 1
+    },
+    "breakdown": "1 online · 1 unknown"
+  }
+}

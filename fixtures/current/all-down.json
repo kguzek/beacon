@@ -1,0 +1,131 @@
+{
+  "description": "all down",
+  "now": 150,
+  "observers": [
+    {
+      "config": {
+        "id": "hp",
+        "name": "HP",
+        "url": "https://beacon-hp.example.org"
+      },
+      "reachable": true,
+      "current": {
+        "schema_version": 1,
+        "location": {
+          "id": "hp",
+          "name": "HP"
+        },
+        "generated_at": 100,
+        "expires_at": 200,
+        "services": [
+          {
+            "id": "alpha.org",
+            "name": "Alpha",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "down",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          },
+          {
+            "id": "beta.org",
+            "name": "Beta",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "down",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          },
+          {
+            "id": "gamma.org",
+            "name": "Gamma",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "down",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          }
+        ]
+      }
+    },
+    {
+      "config": {
+        "id": "pi",
+        "name": "PI",
+        "url": "https://beacon-pi.example.org"
+      },
+      "reachable": true,
+      "current": {
+        "schema_version": 1,
+        "location": {
+          "id": "pi",
+          "name": "PI"
+        },
+        "generated_at": 100,
+        "expires_at": 200,
+        "services": [
+          {
+            "id": "alpha.org",
+            "name": "Alpha",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "down",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          },
+          {
+            "id": "beta.org",
+            "name": "Beta",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "down",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          },
+          {
+            "id": "gamma.org",
+            "name": "Gamma",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "down",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "services": {
+      "alpha.org": "down",
+      "beta.org": "down",
+      "gamma.org": "down"
+    },
+    "headline": "All services down",
+    "counts": {
+      "healthy": 0,
+      "mixed": 0,
+      "down": 3,
+      "unknown": 0
+    },
+    "breakdown": "3 down"
+  }
+}

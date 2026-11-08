@@ -1,0 +1,76 @@
+{
+  "description": "future generated snapshot",
+  "now": 94,
+  "observers": [
+    {
+      "config": {
+        "id": "hp",
+        "name": "HP",
+        "url": "https://beacon-hp.example.org"
+      },
+      "reachable": true,
+      "current": {
+        "schema_version": 1,
+        "location": {
+          "id": "hp",
+          "name": "HP"
+        },
+        "generated_at": 100,
+        "expires_at": 200,
+        "services": [
+          {
+            "id": "alpha.org",
+            "name": "Alpha",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "healthy",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          },
+          {
+            "id": "beta.org",
+            "name": "Beta",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "healthy",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          },
+          {
+            "id": "gamma.org",
+            "name": "Gamma",
+            "hidden": false,
+            "requires_vpn": false,
+            "hosting_location": null,
+            "labels": {},
+            "status": "healthy",
+            "observed_at": 90,
+            "expires_at": 190,
+            "duration_seconds": 0.1
+          }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "services": {
+      "alpha.org": "unknown",
+      "beta.org": "unknown",
+      "gamma.org": "unknown"
+    },
+    "headline": "Service status unavailable",
+    "counts": {
+      "healthy": 0,
+      "mixed": 0,
+      "down": 0,
+      "unknown": 3
+    },
+    "breakdown": "3 unknown"
+  }
+}
