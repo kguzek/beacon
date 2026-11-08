@@ -104,7 +104,11 @@ fn publisher_line(publisher: &PublisherStatus) -> String {
 pub fn render(snapshot: &Snapshot) -> Output {
     let summary = &snapshot.summary;
     let text = if summary.overview == Overview::AllOnline {
-        span(HealthState::Healthy, glyph(HealthState::Healthy))
+        format!(
+            r#"<span foreground="{}" weight="bold">{}</span>"#,
+            colour(HealthState::Healthy),
+            glyph(HealthState::Healthy)
+        )
     } else if summary.counts.total() == 0 {
         span(HealthState::Unknown, glyph(HealthState::Unknown))
     } else {
@@ -232,7 +236,10 @@ mod tests {
             observer("hp", Some(&healthy)),
             observer("pi", Some(&healthy)),
         ]));
-        assert_eq!(output.text, r##"<span foreground="#7dd3b0">✓</span>"##);
+        assert_eq!(
+            output.text,
+            r##"<span foreground="#7dd3b0" weight="bold">✓</span>"##
+        );
         assert_eq!((output.class, output.alt), ("healthy", "all_online"));
         assert!(
             output

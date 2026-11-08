@@ -19,7 +19,7 @@ beacon-cli --json | jq .summary.headline      # full snapshot
 }
 ```
 
-The module text is a green ✓ when every service is online. Otherwise it shows coloured counts: `◐` mixed, `✕` down and `?` unknown, with `✓` for the services still online. The tooltip lists each monitoring location's own counts, followed by the names of services that aren't online.
+The module text is a bold green ✓ when every service is online. Otherwise it shows coloured counts: `◐` mixed, `✕` down and `?` unknown, with `✓` for the services still online. The tooltip lists each monitoring location's own counts, followed by the names of services that aren't online.
 
 Each update also sets:
 
