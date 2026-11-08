@@ -3,7 +3,7 @@ services:
     image: localhost/beacon-publisher:latest
     build:
       context: .
-      dockerfile: publisher/Containerfile
+      dockerfile: apps/publisher/Containerfile
     ports:
       - "127.0.0.1:8080:8080"
     read_only: true

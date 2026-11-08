@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { currentSchema, historySchema, settingsSchema } from "../src/api.ts";
 
-const directory = new URL("../../docs/schema/", import.meta.url);
+const directory = new URL("../../../docs/schema/", import.meta.url);
 await mkdir(directory, { recursive: true });
 for (const [name, schema] of Object.entries({
   current: currentSchema,

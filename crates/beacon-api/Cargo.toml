@@ -1,0 +1,11 @@
+[package]
+name = "beacon-api"
+version = "0.1.0"
+edition.workspace = true
+description = "Wire types for the Beacon publisher HTTP API"
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

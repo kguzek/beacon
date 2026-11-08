@@ -26,7 +26,7 @@ jobs:
       matrix:
         include:
           - name: check formatting
-            command: pnpm exec prettier --check web/ package.json pnpm-workspace.yaml
+            command: pnpm exec prettier --check apps/web/ package.json pnpm-workspace.yaml
           - name: lint
             command: pnpm lint
           - name: test
@@ -47,7 +47,7 @@ jobs:
           require-lockfile: true
 
       - name: Set up locations
-        run: cp locations.example.json web/public/locations.json
+        run: cp locations.example.json apps/web/public/locations.json
 
       - name: Run check
         run: ${{ matrix.command }}
@@ -70,7 +70,7 @@ jobs:
         run: pnpm --filter @beacon/web exec playwright install --with-deps chromium
 
       - name: Set up locations
-        run: cp locations.example.json web/public/locations.json
+        run: cp locations.example.json apps/web/public/locations.json
 
       - name: Build web app
         run: pnpm build
@@ -84,8 +84,8 @@ jobs:
         with:
           name: web-playwright
           path: |
-            web/playwright-report/
-            web/test-results/
+            apps/web/playwright-report/
+            apps/web/test-results/
           retention-days: 7
 
   integration:
@@ -106,12 +106,12 @@ jobs:
         run: pnpm --filter @beacon/web exec playwright install --with-deps chromium
 
       - name: Set up locations
-        run: cp locations.example.json web/public/locations.json
+        run: cp locations.example.json apps/web/public/locations.json
 
       - name: Build publisher and web images
         run: |
-          docker build --file publisher/Containerfile --tag localhost/beacon-publisher:ci .
-          docker build --file web/Containerfile --tag localhost/beacon-web:ci .
+          docker build --file apps/publisher/Containerfile --tag localhost/beacon-publisher:ci .
+          docker build --file apps/web/Containerfile --tag localhost/beacon-web:ci .
 
       - name: Start publisher and web containers
         run: |
@@ -127,7 +127,7 @@ jobs:
             --network beacon-ci --network-alias prometheus \
             --publish 19090:9090 \
             docker.io/library/node:24-alpine node /prometheus.mjs
-          docker cp web/tests/fixtures/prometheus.mjs beacon-prometheus:/prometheus.mjs
+          docker cp apps/web/tests/fixtures/prometheus.mjs beacon-prometheus:/prometheus.mjs
           docker start beacon-prometheus
           curl --fail --retry 30 --retry-delay 1 --retry-all-errors "http://${host}:19090/api/v1/query"
 
@@ -177,8 +177,8 @@ jobs:
         with:
           name: web-publisher-integration
           path: |
-            web/playwright-report/
-            web/test-results/
+            apps/web/playwright-report/
+            apps/web/test-results/
             ${{ runner.temp }}/publisher.log
             ${{ runner.temp }}/web.log
             ${{ runner.temp }}/prometheus.log

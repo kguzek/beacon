@@ -5,9 +5,9 @@
   "scripts": {
     "build": "pnpm --filter @beacon/web build",
     "dev": "pnpm --filter @beacon/web dev",
-    "format": "prettier --write web/ package.json pnpm-workspace.yaml",
+    "format": "prettier --write apps/web/ package.json pnpm-workspace.yaml",
     "lint": "pnpm --filter @beacon/web lint",
-    "schema": "node web/scripts/export-schema.mjs",
+    "schema": "node apps/web/scripts/export-schema.mjs",
     "test": "pnpm --filter @beacon/web test",
     "test:e2e": "pnpm --filter @beacon/web test:e2e"
   },
