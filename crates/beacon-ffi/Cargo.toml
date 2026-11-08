@@ -1,0 +1,22 @@
+[package]
+name = "beacon-ffi"
+version = "0.1.0"
+edition.workspace = true
+description = "UniFFI bindings to beacon-core for the macOS companion"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+name = "beacon_ffi"
+
+[[bin]]
+name = "uniffi-bindgen-swift"
+path = "src/bin/uniffi-bindgen-swift.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+beacon-core = { path = "../beacon-core" }
+tokio = { version = "1", features = ["rt"] }
+uniffi = "0.32"
