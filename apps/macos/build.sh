@@ -45,13 +45,17 @@ bindings() {
 
 app() {
   bindings
-  swift build -c release --arch arm64 --arch x86_64
-  local bin_path
-  bin_path="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+  # Build each architecture separately: a multi-arch `swift build` switches
+  # to the xcbuild backend, which fails to link the xcframework's static lib.
+  local executables=()
+  for arch in arm64 x86_64; do
+    swift build -c release --arch "$arch"
+    executables+=("$(swift build -c release --arch "$arch" --show-bin-path)/BeaconMenu")
+  done
   local bundle="$PWD/build/Beacon.app"
   rm -rf "$bundle"
   mkdir -p "$bundle/Contents/MacOS"
-  cp "$bin_path/BeaconMenu" "$bundle/Contents/MacOS/BeaconMenu"
+  lipo -create "${executables[@]}" -output "$bundle/Contents/MacOS/BeaconMenu"
   cp Info.plist "$bundle/Contents/Info.plist"
   # Ad-hoc signature so the app launches on Apple silicon; not notarized.
   codesign --force --sign - "$bundle"
