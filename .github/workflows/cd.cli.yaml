@@ -1,0 +1,92 @@
+name: CD / CLI
+
+on:
+  push:
+    tags:
+      - cli-v*
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        run: rustup toolchain install 1.96.0 --profile minimal
+
+      - name: Install cross
+        run: cargo +1.96.0 install cross --git https://github.com/cross-rs/cross --rev 526d03ddcd2f70e683074b3ea6f75ed300f33132 --locked
+
+      - name: Build static executable
+        env:
+          CROSS_CONTAINER_ENGINE: docker
+        run: cross +1.96.0 build --locked --release -p beacon-cli --target ${{ matrix.target }}
+
+      - name: Package executable
+        run: cp target/${{ matrix.target }}/release/beacon-cli "${RUNNER_TEMP}/beacon-cli-${{ matrix.target }}"
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v5
+        with:
+          name: beacon-cli-${{ matrix.target }}
+          path: ${{ runner.temp }}/beacon-cli-${{ matrix.target }}
+
+  macos:
+    if: github.server_url == 'https://github.com'
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal \
+            --target aarch64-apple-darwin --target x86_64-apple-darwin
+
+      - name: Build universal executable
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo +1.96.0 build --locked --release -p beacon-cli --target "$target"
+          done
+          lipo -create \
+            target/aarch64-apple-darwin/release/beacon-cli \
+            target/x86_64-apple-darwin/release/beacon-cli \
+            -output "${RUNNER_TEMP}/beacon-cli-universal-apple-darwin"
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v5
+        with:
+          name: beacon-cli-universal-apple-darwin
+          path: ${{ runner.temp }}/beacon-cli-universal-apple-darwin
+
+  release:
+    if: github.server_url == 'https://github.com' && startsWith(github.ref, 'refs/tags/cli-v')
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download executables
+        uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "beacon-cli ${TAG#cli-v}" --generate-notes
