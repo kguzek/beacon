@@ -16,14 +16,14 @@ services:
       RUST_LOG: info
     volumes:
       - type: bind
-        source: "${BEACON_CONFIG_PATH:-${PWD}/config.toml}"
-        target: /etc/beacon/config.toml
+        source: "${BEACON_CONFIG_DIR:-${PWD}}"
+        target: /etc/beacon
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: "${BEACON_SERVICES_PATH:-${PWD}/services.yaml}"
-        target: /etc/beacon/services.yaml
+        source: "${BEACON_SERVICES_DIR:-${PWD}}"
+        target: /etc/beacon-services
         read_only: true
         bind:
           create_host_path: false
