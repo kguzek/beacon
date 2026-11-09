@@ -1,0 +1,35 @@
+{
+  "description": "all unreachable",
+  "now": 150,
+  "observers": [
+    {
+      "config": {
+        "id": "hp",
+        "name": "HP",
+        "url": "https://beacon-hp.example.org"
+      },
+      "reachable": false,
+      "current": null
+    },
+    {
+      "config": {
+        "id": "pi",
+        "name": "PI",
+        "url": "https://beacon-pi.example.org"
+      },
+      "reachable": false,
+      "current": null
+    }
+  ],
+  "expected": {
+    "services": {},
+    "headline": "Service status unavailable",
+    "counts": {
+      "healthy": 0,
+      "mixed": 0,
+      "down": 0,
+      "unknown": 0
+    },
+    "breakdown": ""
+  }
+}
