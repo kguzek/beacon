@@ -16,7 +16,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "@playwright/test": "^1.56.0",
+    "@playwright/test": "^1.65.0",
     "@types/node": "^24.10.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "typescript": "~5.9.3",
