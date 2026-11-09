@@ -9,7 +9,7 @@ use beacon_publisher::{
     Snapshots, StateData,
     config::{Config, inventory},
     prometheus::{Prometheus, fresh, parse},
-    router, spawn_refreshes,
+    router, spawn_inventory_reload, spawn_refreshes,
 };
 use serde_json::{Value, json};
 use std::{
@@ -770,5 +770,47 @@ async fn history_failure_does_not_block_current_and_upstream_limits_apply() {
     let started = std::time::Instant::now();
     assert!(timed.current(100000.0).await.is_err());
     assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    task.abort();
+}
+
+#[tokio::test]
+async fn inventory_reloads_valid_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("services.yaml");
+    std::fs::write(&path, yaml()).unwrap();
+    let upstream = Arc::new(Prometheus::new(config(), inventory(yaml()).unwrap()).unwrap());
+    let poll = std::time::Duration::from_millis(20);
+    let task = spawn_inventory_reload(path.to_str().unwrap().to_owned(), upstream.clone(), poll);
+    let settle = || tokio::time::sleep(poll * 5);
+    settle().await;
+    assert_eq!(upstream.services().len(), 2);
+    std::fs::write(
+        &path,
+        format!(
+            "{}- targets: [\"https://new.example.org\"]\n  labels: {{service: \"New\"}}\n",
+            yaml()
+        ),
+    )
+    .unwrap();
+    settle().await;
+    let ids: Vec<_> = upstream.services().iter().map(|s| s.id.clone()).collect();
+    assert_eq!(
+        ids,
+        ["example.org", "hidden.example.org", "new.example.org"]
+    );
+    for broken in [
+        "invalid",
+        "- targets: [https://a.test, https://a.test/x]\n  labels: {service: X}",
+    ] {
+        std::fs::write(&path, broken).unwrap();
+        settle().await;
+        assert_eq!(upstream.services().len(), 3, "{broken}");
+    }
+    std::fs::remove_file(&path).unwrap();
+    settle().await;
+    assert_eq!(upstream.services().len(), 3);
+    std::fs::write(&path, yaml()).unwrap();
+    settle().await;
+    assert_eq!(upstream.services().len(), 2);
     task.abort();
 }

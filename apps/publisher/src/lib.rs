@@ -129,7 +129,11 @@ pub fn spawn_refreshes(
     let upstream = Arc::new(prometheus::Prometheus::new(config.clone(), services)?);
     // Detected once and shared; current status never waits for it.
     let interval = Arc::new(tokio::sync::OnceCell::<u64>::new());
-    let mut tasks = vec![];
+    let mut tasks = vec![spawn_inventory_reload(
+        config.services.path.clone(),
+        upstream.clone(),
+        Duration::from_secs(INVENTORY_POLL_SECONDS),
+    )];
     for snapshot in ["current", "hour", "day", "month"] {
         let upstream = upstream.clone();
         let snapshots = snapshots.clone();
@@ -202,6 +206,49 @@ pub fn spawn_refreshes(
         }));
     }
     Ok(tasks)
+}
+
+const INVENTORY_POLL_SECONDS: u64 = 10;
+
+/// Polls the inventory and swaps in valid changes; an invalid file keeps the previous inventory.
+pub fn spawn_inventory_reload(
+    path: String,
+    upstream: Arc<prometheus::Prometheus>,
+    poll: Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut last = tokio::fs::read_to_string(&path).await.ok();
+        let mut unreadable = false;
+        loop {
+            tokio::time::sleep(poll).await;
+            let yaml = match tokio::fs::read_to_string(&path).await {
+                Ok(yaml) => yaml,
+                Err(_) => {
+                    if !unreadable {
+                        tracing::warn!(
+                            "cannot read service inventory; keeping the previous inventory"
+                        );
+                    }
+                    unreadable = true;
+                    continue;
+                }
+            };
+            unreadable = false;
+            if last.as_deref() == Some(yaml.as_str()) {
+                continue;
+            }
+            match config::inventory(&yaml) {
+                Ok(services) => {
+                    tracing::info!(services = services.len(), "service inventory reloaded");
+                    upstream.replace_services(services);
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "invalid service inventory; keeping the previous inventory");
+                }
+            }
+            last = Some(yaml);
+        }
+    })
 }
 
 /// Logs transitions only: repeated successes and failures are intentionally silent.

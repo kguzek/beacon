@@ -17,7 +17,7 @@ For example, start a publisher with a base configuration and local overrides:
 beacon-publisher --config.path config.toml --config.path config.local.toml
 ```
 
-Configuration and inventory are loaded at startup. Restart or recreate the publisher after editing either file. Unknown TOML settings fail startup.
+Configuration is loaded at startup; restart or recreate the publisher after editing it. Unknown TOML settings fail startup. The inventory is checked every 10 seconds and reloaded when its content changes. An invalid or unreadable inventory is logged once and the previous one stays in use. Changes reach each snapshot (current, hour, day, month) on its next refresh.
 
 ## Inventory and matching
 

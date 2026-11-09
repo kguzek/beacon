@@ -5,7 +5,10 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use futures_util::StreamExt;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -31,7 +34,7 @@ pub type Samples = HashMap<String, Vec<(f64, f64)>>;
 pub struct Prometheus {
     client: reqwest::Client,
     config: Config,
-    services: Vec<Service>,
+    services: RwLock<Arc<Vec<Service>>>,
 }
 impl Prometheus {
     pub fn new(config: Config, services: Vec<Service>) -> Result<Self> {
@@ -44,8 +47,14 @@ impl Prometheus {
         Ok(Self {
             client,
             config,
-            services,
+            services: RwLock::new(Arc::new(services)),
         })
+    }
+    pub fn services(&self) -> Arc<Vec<Service>> {
+        self.services.read().unwrap().clone()
+    }
+    pub fn replace_services(&self, services: Vec<Service>) {
+        *self.services.write().unwrap() = Arc::new(services);
     }
     fn selector(&self, metric: &str) -> String {
         format!(
@@ -131,7 +140,7 @@ impl Prometheus {
             Kind::Matrix(max) => (true, max),
             Kind::Range { window, step } => (true, (window / step) as usize + 1),
         };
-        parse(&body, matrix, max_points, &self.services)
+        parse(&body, matrix, max_points, &self.services())
     }
     /// Median spacing of `up` samples per target, then the median across targets.
     pub async fn detect_scrape_interval(&self, now: f64) -> Result<u64> {
@@ -177,7 +186,7 @@ impl Prometheus {
             .await?;
         let stale = self.config.refresh.stale_seconds as f64;
         let services = self
-            .services
+            .services()
             .iter()
             .map(|s| {
                 let value = instant(&values, &s.target);
@@ -259,7 +268,7 @@ impl Prometheus {
             .await?;
         let expected = window as f64 / interval as f64;
         let services = self
-            .services
+            .services()
             .iter()
             .map(|s| {
                 let codes = codes.get(&s.target);
@@ -353,7 +362,7 @@ impl Prometheus {
         let expected = step as f64 / interval as f64;
         let steps = window / step;
         let services = self
-            .services
+            .services()
             .iter()
             .map(|s| {
                 let mut segments: Vec<Segment> = vec![];
