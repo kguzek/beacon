@@ -10,6 +10,11 @@
       "id": "pi",
       "name": "Pi",
       "url": "https://beacon-pi.guzek.uk"
+    },
+    {
+      "id": "box",
+      "name": "Box",
+      "url": "https://beacon-box.guzek.uk"
     }
   ]
 }
