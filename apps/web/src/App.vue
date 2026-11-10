@@ -29,6 +29,7 @@ import {
   serviceDescriptions,
 } from "./status";
 
+const repoUrl = "https://git.guzek.uk/kguzek/beacon";
 const title = ref("Service status");
 const observers = ref<Observer[]>([]);
 const configError = ref(false);
@@ -229,7 +230,7 @@ onUnmounted(() => {
   <div class="shell">
     <header>
       <div class="brand-group">
-        <a class="brand" href="https://git.guzek.uk/kguzek/beacon"
+        <a class="brand" :href="repoUrl"
           ><span class="beacon">◉</span
           ><span class="brand-text">beacon</span></a
         ><span class="brand-label">SYSTEM STATUS</span>
@@ -629,14 +630,12 @@ onUnmounted(() => {
     </main>
     <footer>
       <span class="footer-tagline"
-        ><a class="footer-brand" href="https://git.guzek.uk/kguzek/beacon"
-          >beacon</a
-        >
+        ><a class="footer-brand" :href="repoUrl">beacon</a>
         <span aria-hidden="true">·</span
         ><span>Public status, private monitoring.</span></span
       >
       <span class="copyright"
-        >© 2026
+        ><a :href="`${repoUrl}/src/branch/main/LICENSE`">© 2026</a>
         <a
           href="https://www.guzek.uk/?utm_source=beacon&amp;utm_medium=footer&amp;utm_campaign=status_page"
           >Konrad Guzek</a
