@@ -30,6 +30,8 @@ If the status page can't be read, the module shows `?` and puts the error in its
 
 ## Build
 
+On Arch Linux, use the [beacon-cli-git package recipe](../../packaging/arch/README.md).
+
 ```sh
 cargo build --release -p beacon-cli
 ```
