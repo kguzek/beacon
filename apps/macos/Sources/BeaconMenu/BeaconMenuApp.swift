@@ -77,9 +77,11 @@ struct StatusView: View {
     private func publisherRow(_ publisher: PublisherStatus) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(PublisherPresentation.tone(publisher).color)
-                    .frame(width: 8, height: 8)
+                let tone = PublisherPresentation.tone(publisher)
+                Image(systemName: tone.symbol)
+                    .font(.caption.bold())
+                    .foregroundStyle(tone.color)
+                    .frame(width: 12)
                 Text(publisher.name).fontWeight(.medium)
                 Spacer()
                 Text(PublisherPresentation.summary(publisher))
@@ -90,13 +92,13 @@ struct StatusView: View {
                 Text(PublisherPresentation.problem(problem))
                     .font(.caption)
                     .foregroundStyle(PublisherPresentation.tone(problem).color)
-                    .padding(.leading, 14)
+                    .padding(.leading, 18)
             }
             if publisher.problems.count > maxProblems {
                 Text("and \(publisher.problems.count - maxProblems) more")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.leading, 14)
+                    .padding(.leading, 18)
             }
         }
     }
@@ -121,7 +123,7 @@ struct StatusView: View {
                     NSWorkspace.shared.open(url)
                 }
             } label: {
-                Image(systemName: "safari")
+                Image(systemName: "arrow.up.right.square")
             }
             .help("Open status page")
             Button("Quit") { NSApplication.shared.terminate(nil) }

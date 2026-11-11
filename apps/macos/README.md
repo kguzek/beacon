@@ -4,11 +4,12 @@ A menu-bar companion for a Beacon status page. Its icon shows the page's overall
 
 | Icon | Meaning |
 | --- | --- |
-| green checkmark | All services online |
-| amber half circle | Service status mixed: some locations confirm services working, others don't |
-| red triangle | Partial outage |
-| red octagon | All services down |
+| green Beacon logo | All services online |
+| half green, half hollow amber Beacon logo | Service status mixed: some locations confirm services working, others don't |
+| red Beacon logo | Partial outage |
+| red cross | All services down |
 | grey question mark | Status incomplete or unavailable |
+| grey Beacon logo | Checking status |
 
 Click the icon to see each monitoring location's own counts and the services it doesn't currently confirm as healthy.
 

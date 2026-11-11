@@ -31,9 +31,17 @@ final class PresentationTests: XCTestCase {
         for icon in overviews.map({ MenuBarIcon.make(overview: $0, headline: "") })
             + [.checking, .failed]
         {
-            XCTAssertNotNil(
-                NSImage(systemSymbolName: icon.symbol, accessibilityDescription: nil), icon.symbol)
+            if case .symbol(let name) = icon.glyph {
+                XCTAssertNotNil(NSImage(systemSymbolName: name, accessibilityDescription: nil), name)
+            }
             XCTAssertFalse(icon.image.isTemplate)
+        }
+        XCTAssertEqual(MenuBarIcon.make(overview: .allOnline, headline: "").glyph, .logo)
+        XCTAssertEqual(MenuBarIcon.make(overview: .mixed, headline: "").glyph, .mixedLogo)
+        XCTAssertEqual(MenuBarIcon.make(overview: .partialOutage, headline: "").glyph, .logo)
+        XCTAssertEqual(MenuBarIcon.make(overview: .allDown, headline: "").glyph, .symbol("xmark"))
+        for symbol in ["checkmark", "xmark", "questionmark", "arrow.up.right.square"] {
+            XCTAssertNotNil(NSImage(systemSymbolName: symbol, accessibilityDescription: nil), symbol)
         }
     }
 

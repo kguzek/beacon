@@ -47,15 +47,20 @@ app() {
   bindings
   # Build each architecture separately: a multi-arch `swift build` switches
   # to the xcbuild backend, which fails to link the xcframework's static lib.
+  # Copy each binary out straight away: newer SwiftPM uses one bin path for
+  # every architecture, so the next build would overwrite it.
   local executables=()
+  mkdir -p build
   for arch in arm64 x86_64; do
     swift build -c release --arch "$arch"
-    executables+=("$(swift build -c release --arch "$arch" --show-bin-path)/BeaconMenu")
+    cp "$(swift build -c release --arch "$arch" --show-bin-path)/BeaconMenu" "build/BeaconMenu-$arch"
+    executables+=("build/BeaconMenu-$arch")
   done
   local bundle="$PWD/build/Beacon.app"
   rm -rf "$bundle"
   mkdir -p "$bundle/Contents/MacOS"
   lipo -create "${executables[@]}" -output "$bundle/Contents/MacOS/BeaconMenu"
+  rm "${executables[@]}"
   cp Info.plist "$bundle/Contents/Info.plist"
   # Ad-hoc signature so the app launches on Apple silicon; not notarized.
   codesign --force --sign - "$bundle"

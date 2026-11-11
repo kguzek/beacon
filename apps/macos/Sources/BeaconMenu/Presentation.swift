@@ -27,16 +27,90 @@ enum Tone: Equatable {
     var color: Color { Color(nsColor: nsColor) }
 }
 
-/// The menu-bar icon: one symbol per page-level verdict.
+/// What an icon draws: the app's logo, or an SF Symbol.
+enum Glyph: Equatable {
+    case logo
+    /// The logo's left half healthy, its right half a hollow ring in the icon's tone.
+    case mixedLogo
+    case symbol(String)
+}
+
+extension Tone {
+    /// The Waybar module's glyphs: ✓ ◐ ✕ ?
+    var symbol: String {
+        switch self {
+        case .healthy: return "checkmark"
+        case .mixed: return "circle.lefthalf.filled"
+        case .down: return "xmark"
+        case .unknown: return "questionmark"
+        }
+    }
+}
+
+extension Glyph {
+    func image(tone: Tone, label: String?) -> NSImage {
+        let image: NSImage
+        switch self {
+        case .logo:
+            image = Self.logo(left: tone.nsColor, right: tone.nsColor, rightDot: true)
+            image.accessibilityDescription = label
+        case .mixedLogo:
+            image = Self.logo(left: Tone.healthy.nsColor, right: tone.nsColor, rightDot: false)
+            image.accessibilityDescription = label
+        case .symbol(let name):
+            let base =
+                NSImage(systemSymbolName: name, accessibilityDescription: label)
+                ?? NSImage(size: NSSize(width: 16, height: 16))
+            // Bold, like the Waybar text, so the glyphs read at menu-bar size.
+            let configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .bold)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [tone.nsColor]))
+            image = base.withSymbolConfiguration(configuration) ?? base
+        }
+        // Menu-bar images are monochrome templates by default; keep the colour.
+        image.isTemplate = false
+        return image
+    }
+
+    /// The favicon (apps/web/public/favicon.svg): a ring around a dot,
+    /// drawn as two halves so they can differ.
+    private static func logo(left: NSColor, right: NSColor, rightDot: Bool) -> NSImage {
+        NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+            let scale = rect.width / 32
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            // Counter-clockwise from the top: 90...270 is the left half.
+            func half(from start: CGFloat, color: NSColor, dot: Bool) {
+                color.set()
+                let ring = NSBezierPath()
+                ring.appendArc(
+                    withCenter: center, radius: 13 * scale, startAngle: start,
+                    endAngle: start + 180)
+                ring.lineWidth = 3 * scale
+                ring.stroke()
+                guard dot else { return }
+                let semicircle = NSBezierPath()
+                semicircle.appendArc(
+                    withCenter: center, radius: 7 * scale, startAngle: start,
+                    endAngle: start + 180)
+                semicircle.close()
+                semicircle.fill()
+            }
+            half(from: 90, color: left, dot: true)
+            half(from: 270, color: right, dot: rightDot)
+            return true
+        }
+    }
+}
+
+/// The menu-bar icon: one glyph per page-level verdict.
 struct MenuBarIcon: Equatable {
-    let symbol: String
+    let glyph: Glyph
     let tone: Tone
     let label: String
 
     static let checking = MenuBarIcon(
-        symbol: "circle.dotted", tone: .unknown, label: "Checking service status…")
+        glyph: .logo, tone: .unknown, label: "Checking service status…")
     static let failed = MenuBarIcon(
-        symbol: "wifi.exclamationmark", tone: .unknown, label: "Status page unavailable")
+        glyph: .symbol(Tone.unknown.symbol), tone: .unknown, label: "Status page unavailable")
 
     static func make(snapshot: Snapshot?, error: String?) -> MenuBarIcon {
         if let snapshot {
@@ -48,28 +122,30 @@ struct MenuBarIcon: Equatable {
     static func make(overview: Overview, headline: String) -> MenuBarIcon {
         switch overview {
         case .allOnline:
-            return MenuBarIcon(symbol: "checkmark.circle.fill", tone: .healthy, label: headline)
+            return MenuBarIcon(glyph: .logo, tone: .healthy, label: headline)
         case .mixed:
-            return MenuBarIcon(symbol: "circle.lefthalf.filled", tone: .mixed, label: headline)
+            return MenuBarIcon(glyph: .mixedLogo, tone: .mixed, label: headline)
         case .partialOutage:
-            return MenuBarIcon(symbol: "exclamationmark.triangle.fill", tone: .down, label: headline)
+            return MenuBarIcon(glyph: .logo, tone: .down, label: headline)
         case .allDown:
-            return MenuBarIcon(symbol: "xmark.octagon.fill", tone: .down, label: headline)
+            return MenuBarIcon(tone: .down, label: headline)
         case .incomplete, .unavailable:
-            return MenuBarIcon(symbol: "questionmark.circle", tone: .unknown, label: headline)
+            return MenuBarIcon(tone: .unknown, label: headline)
         }
     }
 
-    /// Menu-bar images are monochrome templates by default; keep the colour.
-    var image: NSImage {
-        let base =
-            NSImage(systemSymbolName: symbol, accessibilityDescription: label)
-            ?? NSImage(size: NSSize(width: 16, height: 16))
-        let configuration = NSImage.SymbolConfiguration(paletteColors: [tone.nsColor])
-        let image = base.withSymbolConfiguration(configuration) ?? base
-        image.isTemplate = false
-        return image
+    init(glyph: Glyph, tone: Tone, label: String) {
+        self.glyph = glyph
+        self.tone = tone
+        self.label = label
     }
+
+    /// The tone's own glyph.
+    init(tone: Tone, label: String) {
+        self.init(glyph: .symbol(tone.symbol), tone: tone, label: label)
+    }
+
+    var image: NSImage { glyph.image(tone: tone, label: label) }
 }
 
 enum PublisherPresentation {
