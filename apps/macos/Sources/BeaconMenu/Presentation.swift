@@ -125,9 +125,7 @@ struct MenuBarIcon: Equatable {
             return MenuBarIcon(glyph: .logo, tone: .healthy, label: headline)
         case .mixed:
             return MenuBarIcon(glyph: .mixedLogo, tone: .mixed, label: headline)
-        case .partialOutage:
-            return MenuBarIcon(glyph: .logo, tone: .down, label: headline)
-        case .allDown:
+        case .partialOutage, .allDown:
             return MenuBarIcon(tone: .down, label: headline)
         case .incomplete, .unavailable:
             return MenuBarIcon(tone: .unknown, label: headline)

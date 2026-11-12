@@ -6,8 +6,7 @@ A menu-bar companion for a Beacon status page. Its icon shows the page's overall
 | --- | --- |
 | green Beacon logo | All services online |
 | half green, half hollow amber Beacon logo | Service status mixed: some locations confirm services working, others don't |
-| red Beacon logo | Partial outage |
-| red cross | All services down |
+| red cross | Partial outage or all services down |
 | grey question mark | Status incomplete or unavailable |
 | grey Beacon logo | Checking status |
 

@@ -18,18 +18,15 @@ enum class Tone(val argb: Int) {
  * One icon per page-level verdict.
  *
  * The status bar renders the small icon as a monochrome mask, so the [small] glyphs differ by shape
- * (Waybar-style). Where colour shows, the [large] glyphs follow the macOS menu-bar app.
+ * (Waybar-style). Where colour shows, the [large] glyphs follow the macOS menu-bar app: a red ✕ for
+ * both partial outage and all down, told apart by the text beside it.
  */
 enum class StatusIcon(val tone: Tone, val small: Int, val large: Int) {
     ALL_ONLINE(Tone.HEALTHY, R.drawable.ic_status_online, R.drawable.status_online),
     MIXED(Tone.MIXED, R.drawable.ic_status_mixed, R.drawable.status_mixed),
-    PARTIAL_OUTAGE(
-        Tone.DOWN,
-        R.drawable.ic_status_partial_outage,
-        R.drawable.status_partial_outage,
-    ),
-    /** `!` rather than macOS's ✕: in the status bar, ! reads as more severe than ✕. */
-    ALL_DOWN(Tone.DOWN, R.drawable.ic_status_all_down, R.drawable.status_all_down),
+    PARTIAL_OUTAGE(Tone.DOWN, R.drawable.ic_status_partial_outage, R.drawable.status_down),
+    /** `!` in the status bar: next to partial outage's ✕, it reads as more severe. */
+    ALL_DOWN(Tone.DOWN, R.drawable.ic_status_all_down, R.drawable.status_down),
     /** Incomplete, unavailable or the fetch failed. */
     UNKNOWN(Tone.UNKNOWN, R.drawable.ic_status_unknown, R.drawable.status_unknown),
     /** No result yet. An ellipsis, since a one-colour beacon outline looks too much like online. */

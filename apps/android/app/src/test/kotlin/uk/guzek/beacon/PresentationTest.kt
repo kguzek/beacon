@@ -51,6 +51,13 @@ class PresentationTest {
     }
 
     @Test
+    fun outagesShareTheRedCross() {
+        // In colour, partial outage and all down both show ✕, as on macOS.
+        assertEquals(R.drawable.status_down, StatusIcon.PARTIAL_OUTAGE.large)
+        assertEquals(R.drawable.status_down, StatusIcon.ALL_DOWN.large)
+    }
+
+    @Test
     fun chipText() {
         assertEquals("OK", chip(Overview.ALL_ONLINE))
         assertEquals("2 mixed", chip(Overview.MIXED, counts(mixed = 2u)))

@@ -38,7 +38,8 @@ final class PresentationTests: XCTestCase {
         }
         XCTAssertEqual(MenuBarIcon.make(overview: .allOnline, headline: "").glyph, .logo)
         XCTAssertEqual(MenuBarIcon.make(overview: .mixed, headline: "").glyph, .mixedLogo)
-        XCTAssertEqual(MenuBarIcon.make(overview: .partialOutage, headline: "").glyph, .logo)
+        XCTAssertEqual(
+            MenuBarIcon.make(overview: .partialOutage, headline: "").glyph, .symbol("xmark"))
         XCTAssertEqual(MenuBarIcon.make(overview: .allDown, headline: "").glyph, .symbol("xmark"))
         for symbol in ["checkmark", "xmark", "questionmark", "arrow.up.right.square"] {
             XCTAssertNotNil(NSImage(systemSymbolName: symbol, accessibilityDescription: nil), symbol)
