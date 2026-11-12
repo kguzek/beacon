@@ -1,0 +1,117 @@
+name: CD / Android
+
+on:
+  push:
+    tags:
+      - android-v*
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTUP_TOOLCHAIN: 1.96.0
+
+jobs:
+  build:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check version
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(sed -n 's/^val appVersion = "\(.*\)"$/\1/p' app/build.gradle.kts)"
+          if [[ "${TAG#android-v}" != "$version" ]]; then
+            echo "Tag $TAG doesn't match appVersion $version in app/build.gradle.kts" >&2
+            exit 1
+          fi
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal \
+            --target aarch64-linux-android --target armv7-linux-androideabi --target x86_64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Install Android SDK packages
+        run: |
+          ndk="$(sed -n 's/^ndk = "\(.*\)"$/\1/p' gradle/libs.versions.toml)"
+          sdkmanager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" --install "platforms;android-37.0" "build-tools;37.0.0" "ndk;${ndk}"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          # Release builds start from a clean state.
+          cache-disabled: true
+
+      - name: Set up signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$KEYSTORE_BASE64" ]]; then
+            if [[ "$GITHUB_REF" == refs/tags/android-v* ]]; then
+              echo 'ANDROID_KEYSTORE_BASE64 is not set' >&2
+              exit 1
+            fi
+            echo '::warning::No signing key; building unsigned APKs'
+            exit 0
+          fi
+          keystore="${RUNNER_TEMP}/beacon.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          {
+            echo "BEACON_KEYSTORE=$keystore"
+            echo "BEACON_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "BEACON_KEY_ALIAS=$KEY_ALIAS"
+            echo "BEACON_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Build signed APKs
+        run: ./build.sh apk
+
+      - name: Package APKs
+        run: |
+          mkdir -p "${RUNNER_TEMP}/dist"
+          for apk in app/build/outputs/apk/release/app-*.apk; do
+            # app-<abi>-release.apk, or app-<abi>-release-unsigned.apk without a key
+            name="$(basename "$apk" .apk)"
+            name="${name#app-}"
+            cp "$apk" "${RUNNER_TEMP}/dist/Beacon-android-${name%%-release*}${name##*-release}.apk"
+          done
+          ls -l "${RUNNER_TEMP}/dist"
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v5
+        with:
+          name: Beacon-android
+          path: ${{ runner.temp }}/dist/*.apk
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" "${RUNNER_TEMP}"/dist/*.apk --repo "$GITHUB_REPOSITORY" \
+            --title "Beacon for Android ${TAG#android-v}" --generate-notes

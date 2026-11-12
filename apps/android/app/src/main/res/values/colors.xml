@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The status page's palette (apps/web/src/style.css). -->
+    <color name="healthy">#7DD3B0</color>
+    <color name="mixed">#E8C37A</color>
+    <color name="down">#ED7C8B</color>
+    <color name="unknown">#8491A7</color>
+    <color name="page_background">#0C1018</color>
+</resources>

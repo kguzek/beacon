@@ -23,9 +23,10 @@ The page itself is entirely static, so it can live on a CDN or any static hostin
 - `apps/publisher/` — the status API deployed at each monitoring location.
 - `apps/cli/` — `beacon-cli`, current status for Waybar or scripts.
 - `apps/macos/` — a macOS menu-bar companion.
+- `apps/android/` — an Android companion that keeps the status in the status bar.
 - `crates/beacon-api/` — the API's wire types, shared by the publisher and Rust clients.
 - `crates/beacon-core/` — current-status logic for the desktop clients, kept in agreement with the page by the shared cases in `fixtures/current/`.
-- `crates/beacon-ffi/` — Swift bindings to `beacon-core` for the macOS app.
+- `crates/beacon-ffi/` — Swift and Kotlin bindings to `beacon-core` for the macOS and Android apps.
 - `examples/` — sample publisher configuration and service inventory.
 - `compose.yaml` — a deployment template for the publisher.
 

@@ -2,7 +2,7 @@
 name = "beacon-ffi"
 version = "0.1.0"
 edition.workspace = true
-description = "UniFFI bindings to beacon-core for the macOS companion"
+description = "UniFFI bindings to beacon-core for the macOS and Android companions"
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
@@ -11,6 +11,11 @@ name = "beacon_ffi"
 [[bin]]
 name = "uniffi-bindgen-swift"
 path = "src/bin/uniffi-bindgen-swift.rs"
+required-features = ["bindgen"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
 required-features = ["bindgen"]
 
 [features]

@@ -1,0 +1,8 @@
+# Rust libraries and Kotlin bindings from ./build.sh bindings
+/generated/
+.gradle/
+.kotlin/
+build/
+local.properties
+*.jks
+*.keystore

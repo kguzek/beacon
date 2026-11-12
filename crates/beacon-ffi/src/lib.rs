@@ -1,7 +1,7 @@
-//! UniFFI surface over `beacon-core` for the macOS companion.
+//! UniFFI surface over `beacon-core` for the macOS and Android companions.
 //!
 //! Types mirror `beacon-core` as plain records so the core crate stays free
-//! of FFI concerns. All logic lives in `beacon-core`; Swift only renders.
+//! of FFI concerns. All logic lives in `beacon-core`; Swift and Kotlin only render.
 
 uniffi::setup_scaffolding!();
 
@@ -169,7 +169,10 @@ impl From<core::Snapshot> for Snapshot {
     }
 }
 
+/// Flat, so each case carries just its `Display` message. A `message` field
+/// would clash with `Throwable.message` in the Kotlin bindings.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
+#[uniffi(flat_error)]
 pub enum FetchError {
     InvalidUrl { message: String },
     Request { message: String },

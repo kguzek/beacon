@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mixed: left half healthy, right half a hollow ring in the mixed tone. Geometry from apps/web/public/favicon.svg: ring r=13 (stroke 3), dot r=7. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <path
+        android:pathData="M16,3 A13,13 0 0,0 16,29"
+        android:strokeColor="@color/healthy"
+        android:strokeWidth="3" />
+    <path
+        android:fillColor="@color/healthy"
+        android:pathData="M16,9 A7,7 0 0,0 16,23 Z" />
+    <path
+        android:pathData="M16,3 A13,13 0 0,1 16,29"
+        android:strokeColor="@color/mixed"
+        android:strokeWidth="3" />
+</vector>

@@ -3,3 +3,6 @@
 module_name = "BeaconCore"
 ffi_module_name = "BeaconFFI"
 ffi_module_filename = "BeaconFFI"
+
+[bindings.kotlin]
+package_name = "uk.guzek.beacon.core"

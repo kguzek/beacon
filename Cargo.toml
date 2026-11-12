@@ -1,6 +1,6 @@
 [workspace]
 members = ["apps/*", "crates/*"]
-exclude = ["apps/macos", "apps/web"]
+exclude = ["apps/android", "apps/macos", "apps/web"]
 resolver = "3"
 
 [workspace.package]

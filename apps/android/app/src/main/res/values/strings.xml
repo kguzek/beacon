@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Beacon</string>
+
+    <string name="channel_status">Status</string>
+    <string name="channel_status_description">The status page\'s current verdict, kept in the status bar</string>
+
+    <string name="action_refresh">Refresh</string>
+    <string name="action_open_page">Open page</string>
+    <string name="action_test">Test</string>
+    <string name="action_save">Save</string>
+
+    <string name="first_launch_intro">Enter the address of a Beacon status page. Beacon keeps its current status in your status bar and opens the page when you tap it.</string>
+    <string name="page_url">Status page URL</string>
+    <string name="test_passed">%1$s: %2$s</string>
+    <string name="test_failed">Couldn\'t read the status page: %1$s</string>
+    <string name="checked_at">Checked %1$s</string>
+    <plurals name="and_more">
+        <item quantity="one">and %1$d more</item>
+        <item quantity="other">and %1$d more</item>
+    </plurals>
+
+    <string name="interval">Refresh interval</string>
+    <string name="interval_summary">While the screen is on. With it off, at most every 5 minutes; deep sleep may stretch that further.</string>
+    <string name="interval_seconds">%1$d s</string>
+    <string name="interval_minutes">%1$d min</string>
+
+    <string name="chip_mode">Status-bar chip</string>
+    <string name="chip_mode_summary">Android 16 and later</string>
+    <string name="chip_mode_text">Icon and text</string>
+    <string name="chip_mode_icon">Icon only</string>
+    <string name="chip_mode_off">Off</string>
+
+    <string name="hide_when_online">Hide when all online</string>
+    <string name="hide_when_online_summary">Show the notification only while something isn\'t online</string>
+
+    <string name="access_notifications">Allow notifications</string>
+    <string name="access_live_updates">Turn on live updates for the status-bar chip</string>
+    <string name="access_exact_alarms">Allow exact alarms for on-time refreshes</string>
+    <string name="access_battery">Allow background use, so refreshes aren\'t stopped</string>
+</resources>
