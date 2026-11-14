@@ -8,7 +8,7 @@ edition = "2024"
 
 [workspace.dependencies]
 beacon-api = { path = "crates/beacon-api" }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-tls", "json", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
