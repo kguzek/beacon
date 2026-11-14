@@ -168,13 +168,13 @@ importers:
     devDependencies:
       '@solvro/config':
         specifier: 4.0.0
-        version: 4.0.0(@next/eslint-plugin-next@16.4.2(eslint@10.14.0))(@typescript-eslint/parser@8.72.0(eslint@10.14.0)(typescript@5.9.3))(@typescript-eslint/utils@8.72.0(eslint@10.14.0)(typescript@5.9.3))(@vue/compiler-sfc@3.5.45)(class-validator@0.15.1)(eslint@10.14.0)(prettier@3.9.10)(typescript@5.9.3)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))(zod@4.6.7)
+        version: 4.0.0(@next/eslint-plugin-next@16.4.2(eslint@10.14.0))(@typescript-eslint/parser@8.72.0(eslint@10.14.0)(typescript@5.9.3))(@typescript-eslint/utils@8.72.0(eslint@10.14.0)(typescript@5.9.3))(@vue/compiler-sfc@3.5.45)(class-validator@0.15.1)(eslint@10.14.0)(prettier@3.10.1)(typescript@5.9.3)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))(zod@4.6.7)
       eslint:
         specifier: ^10.13.0
         version: 10.14.0
       prettier:
         specifier: ^3.6.2
-        version: 3.9.10
+        version: 3.10.1
 
   apps/web:
     dependencies:
@@ -2673,8 +2673,8 @@ packages:
       prettier-plugin-svelte:
         optional: true
 
-  prettier@3.9.10:
-    resolution: {integrity: sha512-skGHTH1Yb9QvaTC4hWnRTzEYtCpApF0UMBPz+t/0ZPzP8ihefo/btKd+QA7pUE0fEwA1SbS/NmhyEcstdXOIdA==}
+  prettier@3.10.1:
+    resolution: {integrity: sha512-70vp3ZUYoPlFbF9uiTdXHUUCGEIp7d4+6p+8DYbkm2jP7x/3i/paXVF6dopSI3zd/CEitrZN1rc4i85xWmmXlg==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -3215,15 +3215,15 @@ packages:
 
 snapshots:
 
-  '@adonisjs/eslint-config@3.1.0(eslint-plugin-react-hooks@7.1.1(eslint@10.14.0))(eslint-plugin-react@7.37.5(eslint@10.14.0))(eslint@10.14.0)(prettier@3.9.10)(typescript@5.9.3)':
+  '@adonisjs/eslint-config@3.1.0(eslint-plugin-react-hooks@7.1.1(eslint@10.14.0))(eslint-plugin-react@7.37.5(eslint@10.14.0))(eslint@10.14.0)(prettier@3.10.1)(typescript@5.9.3)':
     dependencies:
       '@adonisjs/eslint-plugin': 2.2.2(eslint@10.14.0)(typescript@5.9.3)
       '@stylistic/eslint-plugin': 5.10.0(eslint@10.14.0)
       eslint: 10.14.0
       eslint-config-prettier: 10.1.8(eslint@10.14.0)
-      eslint-plugin-prettier: 5.5.7(eslint-config-prettier@10.1.8(eslint@10.14.0))(eslint@10.14.0)(prettier@3.9.10)
+      eslint-plugin-prettier: 5.5.7(eslint-config-prettier@10.1.8(eslint@10.14.0))(eslint@10.14.0)(prettier@3.10.1)
       eslint-plugin-unicorn: 64.0.0(eslint@10.14.0)
-      prettier: 3.9.10
+      prettier: 3.10.1
       typescript-eslint: 8.70.1(eslint@10.14.0)(typescript@5.9.3)
     optionalDependencies:
       eslint-plugin-react: 7.37.5(eslint@10.14.0)
@@ -3768,9 +3768,9 @@ snapshots:
 
   '@sindresorhus/merge-streams@4.0.0': {}
 
-  '@solvro/config@4.0.0(@next/eslint-plugin-next@16.4.2(eslint@10.14.0))(@typescript-eslint/parser@8.72.0(eslint@10.14.0)(typescript@5.9.3))(@typescript-eslint/utils@8.72.0(eslint@10.14.0)(typescript@5.9.3))(@vue/compiler-sfc@3.5.45)(class-validator@0.15.1)(eslint@10.14.0)(prettier@3.9.10)(typescript@5.9.3)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))(zod@4.6.7)':
+  '@solvro/config@4.0.0(@next/eslint-plugin-next@16.4.2(eslint@10.14.0))(@typescript-eslint/parser@8.72.0(eslint@10.14.0)(typescript@5.9.3))(@typescript-eslint/utils@8.72.0(eslint@10.14.0)(typescript@5.9.3))(@vue/compiler-sfc@3.5.45)(class-validator@0.15.1)(eslint@10.14.0)(prettier@3.10.1)(typescript@5.9.3)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))(zod@4.6.7)':
     dependencies:
-      '@adonisjs/eslint-config': 3.1.0(eslint-plugin-react-hooks@7.1.1(eslint@10.14.0))(eslint-plugin-react@7.37.5(eslint@10.14.0))(eslint@10.14.0)(prettier@3.9.10)(typescript@5.9.3)
+      '@adonisjs/eslint-config': 3.1.0(eslint-plugin-react-hooks@7.1.1(eslint@10.14.0))(eslint-plugin-react@7.37.5(eslint@10.14.0))(eslint@10.14.0)(prettier@3.10.1)(typescript@5.9.3)
       '@clack/prompts': 1.8.1
       '@commitlint/config-conventional': 21.2.4
       '@darraghor/eslint-plugin-nestjs-typed': 7.5.8(@typescript-eslint/parser@8.72.0(eslint@10.14.0)(typescript@5.9.3))(class-validator@0.15.1)(eslint-import-resolver-typescript@4.4.5(eslint-plugin-import-x@4.17.1(@typescript-eslint/utils@8.72.0(eslint@10.14.0)(typescript@5.9.3))(eslint@10.14.0))(eslint@10.14.0))(eslint@10.14.0)(typescript@5.9.3)
@@ -3781,7 +3781,7 @@ snapshots:
       '@next/eslint-plugin-next': 16.4.2(eslint@10.14.0)
       '@solvro/utils': 1.7.1
       '@tanstack/eslint-plugin-query': 5.104.5(eslint@10.14.0)(typescript@5.9.3)
-      '@trivago/prettier-plugin-sort-imports': 6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.9.10)
+      '@trivago/prettier-plugin-sort-imports': 6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.10.1)
       '@typescript-eslint/eslint-plugin': 8.72.0(@typescript-eslint/parser@8.72.0(eslint@10.14.0)(typescript@5.9.3))(eslint@10.14.0)(typescript@5.9.3)
       '@vitest/eslint-plugin': 1.6.27(@typescript-eslint/eslint-plugin@8.72.0(@typescript-eslint/parser@8.72.0(eslint@10.14.0)(typescript@5.9.3))(eslint@10.14.0)(typescript@5.9.3))(eslint@10.14.0)(typescript@5.9.3)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1)))
       commander: 15.0.0
@@ -3811,8 +3811,8 @@ snapshots:
       local-pkg: 1.2.1
       package-manager-detector: 1.9.0
       picocolors: 1.1.1
-      prettier-plugin-packagejson: 3.0.2(prettier@3.9.10)
-      prettier-plugin-tailwindcss: 0.8.1(@trivago/prettier-plugin-sort-imports@6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.9.10))(prettier@3.9.10)
+      prettier-plugin-packagejson: 3.0.2(prettier@3.10.1)
+      prettier-plugin-tailwindcss: 0.8.1(@trivago/prettier-plugin-sort-imports@6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.10.1))(prettier@3.10.1)
       semver: 7.8.5
       typescript-eslint: 8.70.1(eslint@10.14.0)(typescript@5.9.3)
     transitivePeerDependencies:
@@ -3872,7 +3872,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@trivago/prettier-plugin-sort-imports@6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.9.10)':
+  '@trivago/prettier-plugin-sort-imports@6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.10.1)':
     dependencies:
       '@babel/generator': 7.29.8
       '@babel/parser': 7.29.9
@@ -3882,7 +3882,7 @@ snapshots:
       lodash-es: 4.18.1
       minimatch: 9.0.9
       parse-imports-exports: 0.2.4
-      prettier: 3.9.10
+      prettier: 3.10.1
     optionalDependencies:
       '@vue/compiler-sfc': 3.5.45
     transitivePeerDependencies:
@@ -4874,10 +4874,10 @@ snapshots:
       eslint: 10.14.0
       globals: 17.13.0
 
-  eslint-plugin-prettier@5.5.7(eslint-config-prettier@10.1.8(eslint@10.14.0))(eslint@10.14.0)(prettier@3.9.10):
+  eslint-plugin-prettier@5.5.7(eslint-config-prettier@10.1.8(eslint@10.14.0))(eslint@10.14.0)(prettier@3.10.1):
     dependencies:
       eslint: 10.14.0
-      prettier: 3.9.10
+      prettier: 3.10.1
       prettier-linter-helpers: 1.0.1
       synckit: 0.12.3
     optionalDependencies:
@@ -5793,19 +5793,19 @@ snapshots:
     dependencies:
       fast-diff: 1.3.0
 
-  prettier-plugin-packagejson@3.0.2(prettier@3.9.10):
+  prettier-plugin-packagejson@3.0.2(prettier@3.10.1):
     dependencies:
       sort-package-json: 3.7.1
     optionalDependencies:
-      prettier: 3.9.10
+      prettier: 3.10.1
 
-  prettier-plugin-tailwindcss@0.8.1(@trivago/prettier-plugin-sort-imports@6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.9.10))(prettier@3.9.10):
+  prettier-plugin-tailwindcss@0.8.1(@trivago/prettier-plugin-sort-imports@6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.10.1))(prettier@3.10.1):
     dependencies:
-      prettier: 3.9.10
+      prettier: 3.10.1
     optionalDependencies:
-      '@trivago/prettier-plugin-sort-imports': 6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.9.10)
+      '@trivago/prettier-plugin-sort-imports': 6.0.2(@vue/compiler-sfc@3.5.45)(prettier@3.10.1)
 
-  prettier@3.9.10: {}
+  prettier@3.10.1: {}
 
   pretty-ms@9.3.1:
     dependencies:
