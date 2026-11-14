@@ -39,7 +39,7 @@ jobs:
         run: cp target/${{ matrix.target }}/release/beacon-cli "${RUNNER_TEMP}/beacon-cli-${{ matrix.target }}"
 
       - name: Upload executable
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: beacon-cli-${{ matrix.target }}
           path: ${{ runner.temp }}/beacon-cli-${{ matrix.target }}
@@ -67,7 +67,7 @@ jobs:
             -output "${RUNNER_TEMP}/beacon-cli-universal-apple-darwin"
 
       - name: Upload executable
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: beacon-cli-universal-apple-darwin
           path: ${{ runner.temp }}/beacon-cli-universal-apple-darwin

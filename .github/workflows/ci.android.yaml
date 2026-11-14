@@ -89,7 +89,7 @@ jobs:
         run: ./gradlew assembleDebug assembleRelease
 
       - name: Upload APKs
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Beacon-android
           path: |
@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload reports
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: android-reports
           path: |
