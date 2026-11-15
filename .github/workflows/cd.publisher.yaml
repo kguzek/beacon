@@ -25,7 +25,7 @@ concurrency:
 jobs:
   build:
     if: github.server_url == 'https://github.com'
-    runs-on: ubuntu-24.04 # ubuntu 26+ doesn't work (i forgot why)
+    runs-on: ubuntu-26.04 # ubuntu 26+ doesn't work (i forgot why)
     strategy:
       fail-fast: false
       matrix:
