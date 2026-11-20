@@ -3,7 +3,7 @@
 # and cargo-ndk (linking) use the same pinned NDK.
 ndk = "30.0.16248370"
 
-agp = "9.5.1"
+agp = "9.5.2"
 kotlin = "2.4.21"
 coroutines = "1.11.0"
 composeBom = "2026.09.00"
