@@ -52,6 +52,11 @@ pub struct Prometheus {
     /// example to select one probing site when Prometheus holds several.
     #[serde(default)]
     pub matchers: BTreeMap<String, String>,
+    /// Also select this location's series that lack the matcher labels, such as
+    /// history recorded before the labels were introduced. Matchers become
+    /// `name=~"value|"`. Never applies to mirrors, whose series always carry them.
+    #[serde(default)]
+    pub match_unlabeled: bool,
     #[serde(default = "timeout")]
     pub timeout_seconds: u64,
     #[serde(default = "max_bytes")]
@@ -266,6 +271,7 @@ impl Config {
             name: mirror.name.clone(),
         };
         config.prometheus.matchers = mirror.matchers.clone();
+        config.prometheus.match_unlabeled = false;
         config.mirrors = vec![];
         config
     }
@@ -309,6 +315,10 @@ impl Config {
         );
         ensure!(text(&self.prometheus.job), "job required");
         matchers(&self.prometheus.matchers)?;
+        ensure!(
+            !self.prometheus.match_unlabeled || !self.prometheus.matchers.is_empty(),
+            "prometheus.match_unlabeled requires prometheus.matchers"
+        );
         ensure!(
             self.mirrors.len() <= MAX_MIRRORS,
             "at most {MAX_MIRRORS} mirrors supported"

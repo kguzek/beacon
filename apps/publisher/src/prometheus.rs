@@ -60,10 +60,19 @@ impl Prometheus {
         let prometheus = &self.config.prometheus;
         let mut labels = format!("job={}", serde_json::to_string(&prometheus.job).unwrap());
         for (name, value) in &prometheus.matchers {
-            labels.push_str(&format!(
-                ",{name}={}",
-                serde_json::to_string(value).unwrap()
-            ));
+            if prometheus.match_unlabeled {
+                // An empty alternative also matches series without the label.
+                let pattern = format!("{}|", regex_escape(value));
+                labels.push_str(&format!(
+                    ",{name}=~{}",
+                    serde_json::to_string(&pattern).unwrap()
+                ));
+            } else {
+                labels.push_str(&format!(
+                    ",{name}={}",
+                    serde_json::to_string(value).unwrap()
+                ));
+            }
         }
         format!("{metric}{{{labels}}}")
     }
@@ -445,6 +454,17 @@ enum Kind {
         window: u64,
         step: u64,
     },
+}
+/// Escapes RE2 metacharacters so a label value matches literally.
+fn regex_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        if "\\.+*?()|[]{}^$".contains(c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
 }
 fn median(mut values: Vec<f64>) -> Option<f64> {
     if values.is_empty() {

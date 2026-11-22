@@ -45,6 +45,8 @@ For monitoring results to match, Prometheus's `instance` label must equal the **
 
 When one Prometheus stores Blackbox results from several probing sites (for example, replicas that receive each other's results through remote write), the same `instance` appears once per site. Set `prometheus.matchers` to label equality matchers, such as `matchers = { vantage = "primary" }`, to select this publisher's site. They are added to every query next to `job`. Names must be valid Prometheus label names other than `job`, `instance` and reserved `__` names; values must be nonempty text. Without matchers, several series for one target fail the refresh as duplicates.
 
+Adding a label to existing series starts new series, so history recorded before the label lacks it. Set `prometheus.match_unlabeled = true` to keep that history: each matcher becomes `name=~"value|"`, which also matches series without the label. This is safe for the publisher's own location when every series from other locations carries the label, as remote-written series do. It never applies to mirrors.
+
 A missing result makes a service unknown; it does not remove the service. Beacon does not call the Prometheus targets API or probe services directly.
 
 ## Inventory labels
@@ -206,6 +208,7 @@ name = "Pi"
 url = "http://127.0.0.1:9090"
 job = "blackbox_http"
 matchers = { vantage = "pi" }
+match_unlabeled = true
 
 [[mirrors]]
 id = "box"

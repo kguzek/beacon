@@ -9,6 +9,8 @@ job = "blackbox_http"
 # Added to every query next to `job`, e.g. to read one probing site from a
 # Prometheus that also stores other sites' Blackbox results.
 # matchers = { vantage = "primary" }
+# Also match this location's series recorded before the matcher labels existed.
+# match_unlabeled = true
 timeout_seconds = 20
 max_response_bytes = 16777216
 

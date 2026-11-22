@@ -545,14 +545,21 @@ fn prometheus_matchers_validation() {
 }
 #[tokio::test]
 async fn prometheus_matchers_apply_to_every_query() {
-    for (matchers, expected) in [
-        (vec![], r#"{job="blackbox_http"}"#),
+    for (matchers, unlabeled, expected) in [
+        (vec![], false, r#"{job="blackbox_http"}"#),
         (
             vec![("vantage", "pi"), ("env", "a\"b")],
+            false,
             r#"{job="blackbox_http",env="a\"b",vantage="pi"}"#,
+        ),
+        (
+            vec![("vantage", "pi"), ("env", "a.b")],
+            true,
+            r#"{job="blackbox_http",env=~"a\\.b|",vantage=~"pi|"}"#,
         ),
     ] {
         let (mut config, mock, task) = mock().await;
+        config.prometheus.match_unlabeled = unlabeled;
         config.prometheus.matchers = matchers
             .into_iter()
             .map(|(k, v)| (k.to_owned(), v.to_owned()))
@@ -945,6 +952,21 @@ fn mirror_validation() {
         change(&mut config);
         assert!(config.validate().is_err(), "{case} accepted");
     }
+    let mut unlabeled = config.clone();
+    unlabeled.prometheus.match_unlabeled = true;
+    unlabeled.validate().unwrap();
+    assert!(
+        !unlabeled
+            .for_mirror(&unlabeled.mirrors[0])
+            .prometheus
+            .match_unlabeled
+    );
+    unlabeled.prometheus.matchers.clear();
+    unlabeled.mirrors.clear();
+    assert!(
+        unlabeled.validate().is_err(),
+        "match_unlabeled without matchers"
+    );
     let mirror = config.for_mirror(&config.mirrors[0]);
     assert_eq!(mirror.location.id, "box");
     assert_eq!(mirror.prometheus.matchers["vantage"], "box");
