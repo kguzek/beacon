@@ -12,6 +12,7 @@ pub const DEFAULT_STATUS_PAGE_URL: &str = "https://status.guzek.uk";
 const TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 const MAX_LOCATIONS: usize = 20;
+const MAX_MIRRORS: usize = MAX_LOCATIONS - 1;
 const MAX_SERVICES: usize = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +81,30 @@ pub fn endpoint(base: &str, path: &str) -> String {
     format!("{}{path}", base.strip_suffix('/').unwrap_or(base))
 }
 
+/// A location id usable as one URL path segment without escaping, as publishers require
+/// for mirrored locations.
+fn path_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._~-".contains(&c))
+}
+
+/// Where to request a location's `path` (such as `/current`), in order: its own
+/// publisher's unprefixed endpoint, then each mirror's `/v1/locations/{id}` endpoint.
+pub fn location_endpoints(config: &LocationConfig, path: &str) -> Vec<String> {
+    let mut endpoints = vec![endpoint(&config.url, &format!("/v1{path}"))];
+    if path_id(&config.id) {
+        endpoints.extend(
+            config
+                .mirrors
+                .iter()
+                .map(|mirror| endpoint(mirror, &format!("/v1/locations/{}{path}", config.id))),
+        );
+    }
+    endpoints
+}
+
 /// reqwest's own message omits the cause (DNS, TLS, timeout…); append it.
 fn describe(error: reqwest::Error) -> Error {
     let error = error.without_url();
@@ -131,10 +156,20 @@ impl Client {
         Ok(file)
     }
 
+    /// The location's current snapshot from the first of its publishers that returns a
+    /// valid one, or the last publisher's error.
     pub async fn current(&self, config: &LocationConfig) -> Result<Current, Error> {
-        let current: Current = self.get(&endpoint(&config.url, "/v1/current")).await?;
-        validate_current(&current, config)?;
-        Ok(current)
+        let mut last = None;
+        for url in location_endpoints(config, "/current") {
+            match self.get::<Current>(&url).await {
+                Ok(current) => match validate_current(&current, config) {
+                    Ok(()) => return Ok(current),
+                    Err(error) => last = Some(error),
+                },
+                Err(error) => last = Some(error),
+            }
+        }
+        Err(last.expect("at least the location's own publisher is tried"))
     }
 
     /// Requests every location in parallel. A failing location is reported
@@ -176,9 +211,17 @@ pub fn validate_locations(file: &LocationsFile) -> Result<(), Error> {
         if !ids.insert(location.id.as_str()) {
             return invalid("duplicate observer IDs");
         }
-        let url = Url::parse(&location.url).map_err(|e| Error::Invalid(e.to_string()))?;
-        if !matches!(url.scheme(), "http" | "https") {
-            return invalid("only HTTP API URLs are supported");
+        if location.mirrors.len() > MAX_MIRRORS {
+            return invalid("at most 19 mirrors per location");
+        }
+        if !location.mirrors.is_empty() && !path_id(&location.id) {
+            return invalid("mirrored location ids use only letters, digits, '.', '_', '~' or '-'");
+        }
+        for base in std::iter::once(&location.url).chain(&location.mirrors) {
+            let url = Url::parse(base).map_err(|e| Error::Invalid(e.to_string()))?;
+            if !matches!(url.scheme(), "http" | "https") {
+                return invalid("only HTTP API URLs are supported");
+            }
         }
     }
     Ok(())
@@ -237,6 +280,59 @@ mod tests {
         );
         assert!(locations_url("ftp://example.org").is_err());
         assert!(locations_url("not a url").is_err());
+    }
+
+    fn location(mirrors: &[&str]) -> LocationConfig {
+        LocationConfig {
+            id: "pi".into(),
+            name: "Pi".into(),
+            url: "https://beacon-pi.example.org".into(),
+            mirrors: mirrors.iter().map(|m| m.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn location_endpoints_try_mirrors_after_the_own_publisher() {
+        assert_eq!(
+            location_endpoints(&location(&[]), "/current"),
+            ["https://beacon-pi.example.org/v1/current"]
+        );
+        assert_eq!(
+            location_endpoints(
+                &location(&[
+                    "https://beacon-box.example.org/",
+                    "https://beacon-hp.example.org"
+                ]),
+                "/history/day"
+            ),
+            [
+                "https://beacon-pi.example.org/v1/history/day",
+                "https://beacon-box.example.org/v1/locations/pi/history/day",
+                "https://beacon-hp.example.org/v1/locations/pi/history/day",
+            ]
+        );
+        let mut unsafe_id = location(&["https://beacon-box.example.org"]);
+        unsafe_id.id = "p i".into();
+        assert_eq!(location_endpoints(&unsafe_id, "/current").len(), 1);
+    }
+
+    #[test]
+    fn mirrors_are_validated() {
+        let file = |location| LocationsFile {
+            title: "Status".into(),
+            locations: vec![location],
+        };
+        assert!(validate_locations(&file(location(&["https://beacon-box.example.org"]))).is_ok());
+        assert!(validate_locations(&file(location(&["ftp://beacon-box.example.org"]))).is_err());
+        let mut unsafe_id = location(&["https://beacon-box.example.org"]);
+        unsafe_id.id = "p/i".into();
+        assert!(validate_locations(&file(unsafe_id)).is_err());
+        let many: Vec<String> = (0..20)
+            .map(|i| format!("https://m{i}.example.org"))
+            .collect();
+        let mut too_many = location(&[]);
+        too_many.mirrors = many;
+        assert!(validate_locations(&file(too_many)).is_err());
     }
 
     #[test]

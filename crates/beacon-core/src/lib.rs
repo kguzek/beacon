@@ -9,8 +9,8 @@ mod status;
 
 pub use beacon_api as api;
 pub use fetch::{
-    Client, DEFAULT_STATUS_PAGE_URL, Error, Snapshot, endpoint, locations_url, validate_current,
-    validate_locations,
+    Client, DEFAULT_STATUS_PAGE_URL, Error, Snapshot, endpoint, location_endpoints, locations_url,
+    validate_current, validate_locations,
 };
 pub use status::{
     Counts, HealthState, Observer, Overview, PublisherStatus, ServiceProblem, ServiceState,

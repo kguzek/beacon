@@ -140,6 +140,18 @@ pub struct LocationConfig {
     pub name: String,
     /// Publisher base URL; endpoints are resolved relative to it.
     pub url: String,
+    /// Other publishers that also serve this location's results under
+    /// `/v1/locations/{id}/`, tried in order when `url` fails.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mirrors: Vec<String>,
+}
+
+/// `GET /v1/locations`: the publisher's own location and the locations it mirrors.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LocationIndex {
+    pub schema_version: u8,
+    pub location: Location,
+    pub mirrors: Vec<Location>,
 }
 
 #[cfg(test)]

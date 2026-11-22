@@ -9,7 +9,7 @@ The API is public. Private target URLs, credentials and unrelated scrape labels 
 - [Publisher settings](../examples/config.toml): Prometheus connection, inventory path, HTTP server, refresh intervals and freshness limits.
 - [Service inventory example](../examples/services.yaml): service names, visibility and grouping labels.
 - [Startup arguments](../README.md#publisher-configuration): use `--config.path` to select or layer configuration files. With no arguments, the publisher reads `/etc/beacon/config.toml`.
-- [Browser locations example](../locations.example.json): copy to `apps/web/public/locations.json` to configure the monitoring locations the page contacts, in priority order.
+- [Browser locations example](../locations.example.json): copy to `apps/web/public/locations.json` to configure the monitoring locations the page contacts, in priority order. Each location can list `mirrors`: other publishers' base URLs that serve it too, tried in order when its own `url` fails (see [Publisher fallback](#publisher-fallback)).
 
 For example, start a publisher with a base configuration and local overrides:
 
@@ -178,6 +178,8 @@ Here, Grafana and Prometheus appear under **Observability**; Website appears und
 | `/v1/history/month` | Last 30 days as a state timeline. | 30 minutes |
 | `/healthz` | HTTP process is alive; does not check Prometheus. | Not applicable |
 | `/readyz` | At least one current snapshot has been collected since startup. | Not applicable |
+| `/v1/locations` | This publisher's own location and the locations it mirrors. | Not applicable |
+| `/v1/locations/{id}/current`, `/v1/locations/{id}/history/{hour,day,month}` | The same snapshots for location `id`: the publisher's own location or a mirror. | As above |
 
 Each snapshot endpoint returns HTTP 503 with error code `snapshot_unavailable` until its own first successful refresh. History does not block current data or readiness. `/readyz` returns 503 before the first current snapshot and 200 afterward, even if later refreshes fail; readiness is not a freshness guarantee.
 
@@ -190,6 +192,33 @@ Each snapshot endpoint returns HTTP 503 with error code `snapshot_unavailable` u
 - Four independent refresh loops handle current, hour, day and month. Each starts immediately, runs requests sequentially and waits after completion. At most four upstream requests run concurrently.
 - Failed refreshes retain the last successful response, including its original timestamps. Retry delays double after each consecutive failure, up to 64 times the configured interval and at most 24 hours. A successful refresh resets the delay.
 - Upstream requests have timeouts and streamed byte limits. Each serialized snapshot is limited to 32 MiB. Hour histories hold at most one hour of raw samples per service; timelines are limited to 10,000 steps per window.
+
+### Mirrored locations
+
+When one Prometheus stores Blackbox results from several monitoring locations (for example, replicas that receive each other's results through remote write), its publisher can also serve the other locations. That keeps a location's history available while the location itself is down. Add each one as a mirror, with the matchers that select its series:
+
+```toml
+[location]
+id = "pi"
+name = "Pi"
+
+[prometheus]
+url = "http://127.0.0.1:9090"
+job = "blackbox_http"
+matchers = { vantage = "pi" }
+
+[[mirrors]]
+id = "box"
+name = "Box"
+matchers = { vantage = "box" }
+```
+
+- Each mirror gets its own snapshots and refresh loops, built from the shared Prometheus and inventory with the mirror's matchers. Its responses carry the mirror's `location`, so a browser can't tell which publisher served them.
+- `/v1/current` and `/v1/history/*` keep serving the publisher's own location. `/readyz` follows only the own location.
+- With mirrors, `prometheus.matchers` is required, and every mirror needs matchers that differ from it. Location ids must be URL path segments: letters, digits, `.`, `_`, `~` and `-`, at most 64 bytes. A publisher mirrors at most 19 locations.
+- `/v1/locations` returns `{"schema_version": 1, "location": {"id": …, "name": …}, "mirrors": [{"id": …, "name": …}, …]}`. An unknown location returns 404 with error code `location_not_found`.
+
+A mirror shows exactly what the shared Prometheus holds. If it missed some of a location's results, for example while replication was interrupted, the mirror's history has a gap where the location's own publisher does not.
 
 **Always check the JSON expiry timestamps.** Receiving a successful HTTP response—even from a reachable publisher—does not mean its observations are still fresh.
 
@@ -384,9 +413,19 @@ The overview counts all page-visible services, regardless of search, collapsed g
 
 Initial current requests show “Checking service status…”. Configuration errors keep their dedicated error message. Counts always retain unknown states alongside outages.
 
+### Publisher fallback
+
+Every request for a location goes to its own publisher first (`{url}/v1/current`, `{url}/v1/history/…`). If that fails, returns an invalid response or names another location, the browser tries each of the location's `mirrors` in order at `{mirror}/v1/locations/{id}/…` and uses the first valid response. Mirrors require a location id that is a URL path segment.
+
+```json
+{ "id": "pi", "name": "Pi", "url": "https://beacon-pi.example.org", "mirrors": ["https://beacon-box.example.org"] }
+```
+
+A mirrored snapshot follows the same freshness rules as any other. While a location is down, its publisher's mirrors keep its history visible, but its current observations expire to unknown because nothing new is being probed. The desktop clients (`beacon-core`) use the same order.
+
 ### Monitoring availability
 
-Monitor cards describe whether a publisher is reachable, not whether its services are healthy. A reachable publisher may still contain expired observations.
+Monitor cards describe whether a location's results are reachable, from its own publisher or a mirror, not whether its services are healthy. A reachable publisher may still contain expired observations.
 
 Partial monitoring failures stay on the cards. When all locations are unreachable, a separate alert says “Status updates are temporarily unavailable.” Retained fresh observations can still support the service overview while this alert is visible. Monitoring failure never becomes an “All services down” claim.
 

@@ -4,7 +4,7 @@ import * as z from "zod";
 import {
   currentSchema,
   effectiveStatus,
-  endpoint,
+  fetchFromLocation,
   fetchJson,
   historySchema,
   normalizeHistory,
@@ -126,22 +126,20 @@ async function refresh(
   let delay = polling.failureDelay();
   try {
     if (kind === "current") {
-      const value = await fetchJson(
-        endpoint(observer.config.url, "/v1/current"),
+      const value = await fetchFromLocation(
+        observer.config,
+        "/current",
         currentSchema,
       );
-      if (value.location.id !== observer.config.id)
-        throw new Error("Observer identity mismatch");
       observer.current = markRaw(value);
       observer.reachable = true;
       delay = polling.nextDelay(value, Date.now() / 1000);
     } else {
-      const value = await fetchJson(
-        endpoint(observer.config.url, `/v1/history/${kind}`),
+      const value = await fetchFromLocation(
+        observer.config,
+        `/history/${kind}`,
         historySchema,
       );
-      if (value.location.id !== observer.config.id)
-        throw new Error("Observer identity mismatch");
       const history = normalizeHistory(value);
       observer[kind] = markRaw(history);
       polling.useInterval(history.refresh_seconds);

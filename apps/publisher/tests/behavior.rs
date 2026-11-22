@@ -6,7 +6,7 @@ use axum::{
     routing::get,
 };
 use beacon_publisher::{
-    Snapshots, StateData,
+    StateData,
     config::{Config, inventory},
     prometheus::{Prometheus, fresh, parse},
     router, spawn_inventory_reload, spawn_refreshes,
@@ -724,10 +724,7 @@ async fn history_aggregates_steps_crossing_metadata_changes() {
 async fn cached_http_and_failure_retention() {
     let (mut config, mock, task) = mock().await;
     config.refresh.current_seconds = 1;
-    let state = StateData {
-        snapshots: Arc::new(RwLock::new(Snapshots::default())),
-        cache_seconds: 15,
-    };
+    let state = StateData::new(&config);
     let app = router(state.clone(), &["https://status.example.org".into()]);
     for (path, method, status) in [
         ("/healthz", "GET", 200),
@@ -754,8 +751,7 @@ async fn cached_http_and_failure_retention() {
         assert_eq!(response.status().as_u16(), status);
     }
     assert_eq!(mock.requests.load(Ordering::SeqCst), 0);
-    let tasks =
-        spawn_refreshes(config, inventory(yaml()).unwrap(), state.snapshots.clone()).unwrap();
+    let tasks = spawn_refreshes(config, inventory(yaml()).unwrap(), &state).unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         while {
             let cache = state.snapshots.read().unwrap();
@@ -840,7 +836,11 @@ async fn inventory_reloads_valid_changes() {
     std::fs::write(&path, yaml()).unwrap();
     let upstream = Arc::new(Prometheus::new(config(), inventory(yaml()).unwrap()).unwrap());
     let poll = std::time::Duration::from_millis(20);
-    let task = spawn_inventory_reload(path.to_str().unwrap().to_owned(), upstream.clone(), poll);
+    let task = spawn_inventory_reload(
+        path.to_str().unwrap().to_owned(),
+        vec![upstream.clone()],
+        poll,
+    );
     let settle = || tokio::time::sleep(poll * 5);
     settle().await;
     assert_eq!(upstream.services().len(), 2);
@@ -872,5 +872,159 @@ async fn inventory_reloads_valid_changes() {
     std::fs::write(&path, yaml()).unwrap();
     settle().await;
     assert_eq!(upstream.services().len(), 2);
+    task.abort();
+}
+
+fn mirrored(mut config: Config) -> Config {
+    config.prometheus.matchers = [("vantage".to_owned(), "primary".to_owned())].into();
+    config.mirrors = toml::from_str::<toml::Table>(
+        r#"
+[[mirrors]]
+id = "box"
+name = "Box"
+matchers = { vantage = "box" }
+"#,
+    )
+    .unwrap()["mirrors"]
+        .clone()
+        .try_into()
+        .unwrap();
+    config
+}
+type ConfigChange = Box<dyn Fn(&mut Config)>;
+#[test]
+fn mirror_validation() {
+    let config = mirrored(config());
+    config.validate().unwrap();
+    let broken: Vec<(&str, ConfigChange)> = vec![
+        ("own matchers", Box::new(|c| c.prometheus.matchers.clear())),
+        (
+            "mirror matchers",
+            Box::new(|c| c.mirrors[0].matchers.clear()),
+        ),
+        (
+            "same matchers",
+            Box::new(|c| c.mirrors[0].matchers = c.prometheus.matchers.clone()),
+        ),
+        ("own id", Box::new(|c| c.mirrors[0].id = "primary".into())),
+        ("path id", Box::new(|c| c.mirrors[0].id = "a/b".into())),
+        (
+            "own path id",
+            Box::new(|c| c.location.id = "Primary server".into()),
+        ),
+        ("name", Box::new(|c| c.mirrors[0].name = " ".into())),
+        (
+            "matcher name",
+            Box::new(|c| {
+                c.mirrors[0].matchers = [("job".to_owned(), "x".to_owned())].into();
+            }),
+        ),
+        (
+            "duplicate",
+            Box::new(|c| {
+                let copy = c.mirrors[0].clone();
+                c.mirrors.push(copy);
+            }),
+        ),
+        (
+            "too many",
+            Box::new(|c| {
+                c.mirrors = (0..20)
+                    .map(|i| {
+                        let mut m = c.mirrors[0].clone();
+                        m.id = format!("m{i}");
+                        m.matchers = [("vantage".to_owned(), format!("m{i}"))].into();
+                        m
+                    })
+                    .collect();
+            }),
+        ),
+    ];
+    for (case, change) in broken {
+        let mut config = config.clone();
+        change(&mut config);
+        assert!(config.validate().is_err(), "{case} accepted");
+    }
+    let mirror = config.for_mirror(&config.mirrors[0]);
+    assert_eq!(mirror.location.id, "box");
+    assert_eq!(mirror.prometheus.matchers["vantage"], "box");
+    assert!(mirror.mirrors.is_empty());
+}
+#[tokio::test]
+async fn mirrors_are_served_under_their_location() {
+    let (config, mock, task) = mock().await;
+    let mut config = mirrored(config);
+    config.refresh.scrape_seconds = Some(15);
+    let state = StateData::new(&config);
+    let app = router(state.clone(), &[]);
+    let tasks = spawn_refreshes(config, inventory(yaml()).unwrap(), &state).unwrap();
+    let mirror = state.locations.by_id["box"].clone();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while {
+            let own = state.snapshots.read().unwrap();
+            let box_ = mirror.read().unwrap();
+            own.current.is_none() || box_.current.is_none() || box_.day.is_none()
+        } {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let queries = mock.queries.read().unwrap().clone();
+    for vantage in ["primary", "box"] {
+        let selector = format!(r#"{{job="blackbox_http",vantage="{vantage}"}}"#);
+        assert!(queries.iter().any(|q| q.contains(&selector)), "{vantage}");
+    }
+    assert!(
+        queries.iter().all(|q| q.contains("vantage=")),
+        "unfiltered query"
+    );
+    let get = |path: &'static str| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = response.status().as_u16();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, serde_json::from_slice::<Value>(&body).unwrap())
+        }
+    };
+    let (status, index) = get("/v1/locations").await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        index,
+        json!({
+            "schema_version": 1,
+            "location": {"id": "primary", "name": "Primary server"},
+            "mirrors": [{"id": "box", "name": "Box"}],
+        })
+    );
+    for (path, id) in [
+        ("/v1/current", "primary"),
+        ("/v1/locations/primary/current", "primary"),
+        ("/v1/locations/box/current", "box"),
+        ("/v1/locations/box/history/day", "box"),
+    ] {
+        let (status, body) = get(path).await;
+        assert_eq!(status, 200, "{path}");
+        assert_eq!(body["location"]["id"], id, "{path}");
+    }
+    for (path, status) in [
+        ("/v1/locations/elsewhere/current", 404),
+        ("/v1/locations/box", 404),
+        ("/v1/locations/box/", 404),
+        ("/v1/locations/box/history", 404),
+        ("/v1/locations/box/history/week", 404),
+        ("/v1/elsewhere", 404),
+    ] {
+        assert_eq!(get(path).await.0, status, "{path}");
+    }
+    for task in tasks {
+        task.abort();
+    }
     task.abort();
 }

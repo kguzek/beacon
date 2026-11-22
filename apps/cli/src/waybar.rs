@@ -210,6 +210,7 @@ mod tests {
                 id: id.into(),
                 name: id.to_uppercase(),
                 url: format!("https://{id}.example.org"),
+                mirrors: vec![],
             },
             reachable: services.is_some(),
             current: services.map(|services| Current {

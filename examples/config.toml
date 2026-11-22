@@ -31,3 +31,10 @@ stale_seconds = 120
 # scrape_seconds = 15
 day_step_seconds = 60
 month_step_seconds = 1800
+
+# Other locations whose Blackbox results this Prometheus also stores, served at
+# /v1/locations/{id}/. Requires prometheus.matchers; see docs/API.md.
+# [[mirrors]]
+# id = "secondary"
+# name = "Secondary server"
+# matchers = { vantage = "secondary" }

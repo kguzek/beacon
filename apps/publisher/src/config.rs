@@ -16,7 +16,21 @@ pub struct Config {
     pub server: Server,
     #[serde(default)]
     pub refresh: Refresh,
+    /// Other monitoring locations whose Blackbox results the same Prometheus
+    /// stores (for example via remote write), served under `/v1/locations/{id}/`.
+    #[serde(default)]
+    pub mirrors: Vec<Mirror>,
 }
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mirror {
+    pub id: String,
+    pub name: String,
+    /// Selects this location's series, like `prometheus.matchers` for the own location.
+    pub matchers: BTreeMap<String, String>,
+}
+/// At most 20 locations per page, so a publisher mirrors at most 19 others.
+pub const MAX_MIRRORS: usize = 19;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Location {
@@ -131,6 +145,25 @@ struct Group {
     labels: HashMap<String, String>,
 }
 
+fn matchers(matchers: &BTreeMap<String, String>) -> Result<()> {
+    for (name, value) in matchers {
+        ensure!(
+            label_name(name)
+                && !name.starts_with("__")
+                && !["job", "instance"].contains(&name.as_str()),
+            "invalid Prometheus matcher label name"
+        );
+        ensure!(text(value), "invalid Prometheus matcher value");
+    }
+    Ok(())
+}
+/// A location id usable as one URL path segment without escaping.
+pub fn path_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._~-".contains(&c))
+}
 /// A Prometheus label name: `[a-zA-Z_][a-zA-Z0-9_]*`.
 fn label_name(name: &str) -> bool {
     let mut chars = name.chars();
@@ -224,6 +257,18 @@ pub fn inventory(yaml: &str) -> Result<Vec<Service>> {
     Ok(result)
 }
 impl Config {
+    /// The configuration for publishing a mirrored location: the same Prometheus,
+    /// inventory and refresh settings, with the mirror's identity and matchers.
+    pub fn for_mirror(&self, mirror: &Mirror) -> Config {
+        let mut config = self.clone();
+        config.location = Location {
+            id: mirror.id.clone(),
+            name: mirror.name.clone(),
+        };
+        config.prometheus.matchers = mirror.matchers.clone();
+        config.mirrors = vec![];
+        config
+    }
     pub fn load(path: &Path) -> Result<(Self, Vec<Service>)> {
         Self::load_paths(&[path])
     }
@@ -263,14 +308,44 @@ impl Config {
             "invalid Prometheus URL; use bearer_token for credentials"
         );
         ensure!(text(&self.prometheus.job), "job required");
-        for (name, value) in &self.prometheus.matchers {
+        matchers(&self.prometheus.matchers)?;
+        ensure!(
+            self.mirrors.len() <= MAX_MIRRORS,
+            "at most {MAX_MIRRORS} mirrors supported"
+        );
+        if !self.mirrors.is_empty() {
+            // One Prometheus holds several locations: every query needs a selector.
             ensure!(
-                label_name(name)
-                    && !name.starts_with("__")
-                    && !["job", "instance"].contains(&name.as_str()),
-                "invalid Prometheus matcher label name"
+                path_id(&self.location.id),
+                "with mirrors, location id must use only letters, digits, '.', '_', '~' or '-'"
             );
-            ensure!(text(value), "invalid Prometheus matcher value");
+            ensure!(
+                !self.prometheus.matchers.is_empty(),
+                "prometheus.matchers required with mirrors"
+            );
+        }
+        let mut ids = HashSet::from([self.location.id.as_str()]);
+        for mirror in &self.mirrors {
+            ensure!(
+                path_id(&mirror.id) && text(&mirror.name),
+                "invalid mirror; ids use only letters, digits, '.', '_', '~' or '-'"
+            );
+            ensure!(
+                ids.insert(&mirror.id),
+                "duplicate location id: {}",
+                mirror.id
+            );
+            ensure!(
+                !mirror.matchers.is_empty(),
+                "mirror {} needs matchers",
+                mirror.id
+            );
+            matchers(&mirror.matchers)?;
+            ensure!(
+                mirror.matchers != self.prometheus.matchers,
+                "mirror {} has the same matchers as this location",
+                mirror.id
+            );
         }
         ensure!(
             (1..=120).contains(&self.prometheus.timeout_seconds),

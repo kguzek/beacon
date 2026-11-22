@@ -13,6 +13,7 @@ use axum::{
 use bytes::Bytes;
 use config::{Config, Service};
 use std::{
+    collections::BTreeMap,
     sync::{Arc, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -20,6 +21,7 @@ use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     timeout::TimeoutLayer,
 };
+use tracing::Instrument;
 
 #[derive(Default)]
 pub struct Snapshots {
@@ -30,8 +32,50 @@ pub struct Snapshots {
 }
 #[derive(Clone)]
 pub struct StateData {
+    /// The publisher's own location, also served at the unprefixed `/v1/` paths.
     pub snapshots: Arc<RwLock<Snapshots>>,
     pub cache_seconds: u64,
+    pub locations: Arc<Locations>,
+}
+/// Every location served under `/v1/locations/`.
+#[derive(Default)]
+pub struct Locations {
+    /// The serialized `/v1/locations` body; absent means the routes are not served.
+    pub index: Option<Bytes>,
+    /// Snapshots by location id, the own location included.
+    pub by_id: BTreeMap<String, Arc<RwLock<Snapshots>>>,
+}
+impl StateData {
+    pub fn new(config: &Config) -> Self {
+        let snapshots = Arc::new(RwLock::new(Snapshots::default()));
+        let mut by_id = BTreeMap::new();
+        if config::path_id(&config.location.id) {
+            by_id.insert(config.location.id.clone(), snapshots.clone());
+        }
+        for mirror in &config.mirrors {
+            by_id.insert(mirror.id.clone(), Arc::default());
+        }
+        let index = beacon_api::LocationIndex {
+            schema_version: 1,
+            location: config.location.clone().into(),
+            mirrors: config
+                .mirrors
+                .iter()
+                .map(|m| beacon_api::Location {
+                    id: m.id.clone(),
+                    name: m.name.clone(),
+                })
+                .collect(),
+        };
+        Self {
+            snapshots,
+            cache_seconds: config.server.cache_seconds,
+            locations: Arc::new(Locations {
+                index: Some(Bytes::from(serde_json::to_vec(&index).unwrap())),
+                by_id,
+            }),
+        }
+    }
 }
 pub fn now() -> f64 {
     SystemTime::now()
@@ -86,126 +130,187 @@ async fn serve(State(state): State<StateData>, request: Request) -> Response {
             r#"{"error":"request_body_not_supported"}"#,
         );
     }
-    let snapshots = state.snapshots.read().unwrap();
     match path.as_str() {
         "/healthz" => error(StatusCode::OK, r#"{"status":"ok"}"#),
         // Initial current availability latches readiness; later upstream failures do not undo it.
-        "/readyz" if snapshots.current.is_some() => error(StatusCode::OK, r#"{"status":"ready"}"#),
+        "/readyz" if state.snapshots.read().unwrap().current.is_some() => {
+            error(StatusCode::OK, r#"{"status":"ready"}"#)
+        }
         "/readyz" => error(
             StatusCode::SERVICE_UNAVAILABLE,
             r#"{"error":"initial_snapshot_unavailable"}"#,
         ),
-        "/v1/current" | "/v1/history/hour" | "/v1/history/day" | "/v1/history/month" => {
-            let bytes = match path.as_str() {
-                "/v1/current" => &snapshots.current,
-                "/v1/history/hour" => &snapshots.hour,
-                "/v1/history/day" => &snapshots.day,
-                _ => &snapshots.month,
+        "/v1/locations" => match &state.locations.index {
+            Some(index) => cached(&state, index.clone()),
+            None => error(StatusCode::NOT_FOUND, r#"{"error":"not_found"}"#),
+        },
+        _ => {
+            let (snapshots, snapshot) = if let Some(rest) = path.strip_prefix("/v1/locations/") {
+                let Some((id, snapshot)) = rest.split_once('/') else {
+                    return error(StatusCode::NOT_FOUND, r#"{"error":"not_found"}"#);
+                };
+                match state.locations.by_id.get(id) {
+                    Some(snapshots) => (snapshots, snapshot),
+                    None => {
+                        return error(StatusCode::NOT_FOUND, r#"{"error":"location_not_found"}"#);
+                    }
+                }
+            } else if let Some(snapshot) = path.strip_prefix("/v1/") {
+                (&state.snapshots, snapshot)
+            } else {
+                return error(StatusCode::NOT_FOUND, r#"{"error":"not_found"}"#);
+            };
+            let snapshots = snapshots.read().unwrap();
+            let bytes = match snapshot {
+                "current" => &snapshots.current,
+                "history/hour" => &snapshots.hour,
+                "history/day" => &snapshots.day,
+                "history/month" => &snapshots.month,
+                _ => return error(StatusCode::NOT_FOUND, r#"{"error":"not_found"}"#),
             };
             match bytes {
-                Some(bytes) => Response::builder()
-                    .header("content-type", "application/json")
-                    .header(
-                        "cache-control",
-                        format!("public, max-age={}, must-revalidate", state.cache_seconds),
-                    )
-                    .header("x-content-type-options", "nosniff")
-                    .body(Body::from(bytes.clone()))
-                    .unwrap(),
+                Some(bytes) => cached(&state, bytes.clone()),
                 None => error(
                     StatusCode::SERVICE_UNAVAILABLE,
                     r#"{"error":"snapshot_unavailable"}"#,
                 ),
             }
         }
-        _ => error(StatusCode::NOT_FOUND, r#"{"error":"not_found"}"#),
     }
 }
+fn cached(state: &StateData, body: Bytes) -> Response {
+    Response::builder()
+        .header("content-type", "application/json")
+        .header(
+            "cache-control",
+            format!("public, max-age={}, must-revalidate", state.cache_seconds),
+        )
+        .header("x-content-type-options", "nosniff")
+        .body(Body::from(body))
+        .unwrap()
+}
+/// Starts the refresh loops for the own location and every mirror, plus one
+/// inventory reload shared by all of them.
 pub fn spawn_refreshes(
     config: Config,
     services: Vec<Service>,
-    snapshots: Arc<RwLock<Snapshots>>,
+    state: &StateData,
 ) -> anyhow::Result<Vec<tokio::task::JoinHandle<()>>> {
-    let upstream = Arc::new(prometheus::Prometheus::new(config.clone(), services)?);
-    // Detected once and shared; current status never waits for it.
-    let interval = Arc::new(tokio::sync::OnceCell::<u64>::new());
-    let mut tasks = vec![spawn_inventory_reload(
+    let mut locations = vec![(config.clone(), state.snapshots.clone(), false)];
+    for mirror in &config.mirrors {
+        let snapshots = state.locations.by_id[&mirror.id].clone();
+        locations.push((config.for_mirror(mirror), snapshots, true));
+    }
+    let mut upstreams = vec![];
+    let mut tasks = vec![];
+    for (config, snapshots, mirror) in locations {
+        let upstream = Arc::new(prometheus::Prometheus::new(
+            config.clone(),
+            services.clone(),
+        )?);
+        upstreams.push(upstream.clone());
+        let span = tracing::info_span!("location", id = %config.location.id);
+        tasks.extend(spawn_location(config, upstream, snapshots, mirror, span));
+    }
+    tasks.push(spawn_inventory_reload(
         config.services.path.clone(),
-        upstream.clone(),
+        upstreams,
         Duration::from_secs(INVENTORY_POLL_SECONDS),
-    )];
+    ));
+    Ok(tasks)
+}
+fn spawn_location(
+    config: Config,
+    upstream: Arc<prometheus::Prometheus>,
+    snapshots: Arc<RwLock<Snapshots>>,
+    mirror: bool,
+    span: tracing::Span,
+) -> Vec<tokio::task::JoinHandle<()>> {
+    // Detected once per location and shared; current status never waits for it.
+    let interval = Arc::new(tokio::sync::OnceCell::<u64>::new());
+    let mut tasks = vec![];
     for snapshot in ["current", "hour", "day", "month"] {
         let upstream = upstream.clone();
         let snapshots = snapshots.clone();
         let interval = interval.clone();
         let refresh = config.refresh.clone();
-        tasks.push(tokio::spawn(async move {
-            let mut failures = 0u32;
-            let mut health = RefreshHealth::default();
-            loop {
-                let mut seconds = match snapshot {
-                    "current" => refresh.current_seconds,
-                    "day" => refresh.day_seconds,
-                    "month" => refresh.month_seconds,
-                    _ => refresh.hour_seconds.unwrap_or(10),
+        tasks.push(tokio::spawn(
+            async move {
+                let mut failures = 0u32;
+                let mut health = RefreshHealth {
+                    mirror,
+                    ..Default::default()
                 };
-                let result = if snapshot == "current" {
-                    upstream.current(now()).await
-                } else {
-                    match interval
-                        .get_or_try_init(|| async {
-                            let detected = upstream.detect_scrape_interval(now()).await?;
-                            tracing::info!(
-                                scrape_interval_seconds = detected,
-                                configured = refresh.scrape_seconds.is_some(),
-                                "scrape interval established"
-                            );
-                            anyhow::Ok(detected)
-                        })
-                        .await
-                    {
-                        Ok(&interval) => {
-                            if snapshot == "hour" {
-                                seconds = refresh.hour_interval(interval);
+                loop {
+                    let mut seconds = match snapshot {
+                        "current" => refresh.current_seconds,
+                        "day" => refresh.day_seconds,
+                        "month" => refresh.month_seconds,
+                        _ => refresh.hour_seconds.unwrap_or(10),
+                    };
+                    let result = if snapshot == "current" {
+                        upstream.current(now()).await
+                    } else {
+                        match interval
+                            .get_or_try_init(|| async {
+                                let detected = upstream.detect_scrape_interval(now()).await?;
+                                tracing::info!(
+                                    scrape_interval_seconds = detected,
+                                    configured = refresh.scrape_seconds.is_some(),
+                                    "scrape interval established"
+                                );
+                                anyhow::Ok(detected)
+                            })
+                            .await
+                        {
+                            Ok(&interval) => {
+                                if snapshot == "hour" {
+                                    seconds = refresh.hour_interval(interval);
+                                }
+                                upstream.history(now(), snapshot, interval).await
                             }
-                            upstream.history(now(), snapshot, interval).await
+                            Err(error) => Err(error),
                         }
-                        Err(error) => Err(error),
+                    };
+                    let result = result.and_then(|body| {
+                        anyhow::ensure!(
+                            body.len() <= 32 * 1024 * 1024,
+                            "snapshot exceeds size limit"
+                        );
+                        Ok(body)
+                    });
+                    match result {
+                        Ok(body) => {
+                            let mut cache = snapshots.write().unwrap();
+                            let slot = match snapshot {
+                                "current" => &mut cache.current,
+                                "day" => &mut cache.day,
+                                "month" => &mut cache.month,
+                                _ => &mut cache.hour,
+                            };
+                            *slot = Some(Bytes::from(body));
+                            failures = 0;
+                            health.succeeded(snapshot);
+                        }
+                        Err(error) => {
+                            failures = (failures + 1).min(6);
+                            health.failed(
+                                snapshot,
+                                &error,
+                                (seconds * 2u64.pow(failures)).min(86400),
+                            );
+                        }
                     }
-                };
-                let result = result.and_then(|body| {
-                    anyhow::ensure!(
-                        body.len() <= 32 * 1024 * 1024,
-                        "snapshot exceeds size limit"
-                    );
-                    Ok(body)
-                });
-                match result {
-                    Ok(body) => {
-                        let mut cache = snapshots.write().unwrap();
-                        let slot = match snapshot {
-                            "current" => &mut cache.current,
-                            "day" => &mut cache.day,
-                            "month" => &mut cache.month,
-                            _ => &mut cache.hour,
-                        };
-                        *slot = Some(Bytes::from(body));
-                        failures = 0;
-                        health.succeeded(snapshot);
-                    }
-                    Err(error) => {
-                        failures = (failures + 1).min(6);
-                        health.failed(snapshot, &error, (seconds * 2u64.pow(failures)).min(86400));
-                    }
+                    tokio::time::sleep(Duration::from_secs(
+                        (seconds * 2u64.pow(failures)).min(86400),
+                    ))
+                    .await;
                 }
-                tokio::time::sleep(Duration::from_secs(
-                    (seconds * 2u64.pow(failures)).min(86400),
-                ))
-                .await;
             }
-        }));
+            .instrument(span.clone()),
+        ));
     }
-    Ok(tasks)
+    tasks
 }
 
 const INVENTORY_POLL_SECONDS: u64 = 10;
@@ -213,7 +318,7 @@ const INVENTORY_POLL_SECONDS: u64 = 10;
 /// Polls the inventory and swaps in valid changes; an invalid file keeps the previous inventory.
 pub fn spawn_inventory_reload(
     path: String,
-    upstream: Arc<prometheus::Prometheus>,
+    upstreams: Vec<Arc<prometheus::Prometheus>>,
     poll: Duration,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -240,7 +345,9 @@ pub fn spawn_inventory_reload(
             match config::inventory(&yaml) {
                 Ok(services) => {
                     tracing::info!(services = services.len(), "service inventory reloaded");
-                    upstream.replace_services(services);
+                    for upstream in &upstreams {
+                        upstream.replace_services(services.clone());
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(%error, "invalid service inventory; keeping the previous inventory");
@@ -256,6 +363,8 @@ pub fn spawn_inventory_reload(
 struct RefreshHealth {
     available: bool,
     failing: bool,
+    /// Readiness follows the own location only.
+    mirror: bool,
 }
 
 impl RefreshHealth {
@@ -265,7 +374,7 @@ impl RefreshHealth {
         }
         if !self.available {
             tracing::info!(snapshot, "initial snapshot available");
-            if snapshot == "current" {
+            if snapshot == "current" && !self.mirror {
                 tracing::info!("publisher ready");
             }
         }

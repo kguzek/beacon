@@ -250,21 +250,32 @@ export function probeSlots(
   fill(previous, end);
   return slots;
 }
+const publisherUrlSchema = z
+  .url()
+  .refine(
+    (value) => ["http:", "https:"].includes(new URL(value).protocol),
+    "Only HTTP API URLs are supported",
+  );
+// A location id usable as one URL path segment without escaping.
+const pathIdPattern = /^[\w.~-]{1,64}$/;
 export const settingsSchema = z
   .object({
     title: z.string().default("Service status"),
     locations: z
       .array(
-        z.object({
-          id: z.string().min(1),
-          name: z.string().min(1),
-          url: z
-            .url()
-            .refine(
-              (value) => ["http:", "https:"].includes(new URL(value).protocol),
-              "Only HTTP API URLs are supported",
-            ),
-        }),
+        z
+          .object({
+            id: z.string().min(1),
+            name: z.string().min(1),
+            url: publisherUrlSchema,
+            // Other publishers serving this location under /v1/locations/{id}/,
+            // tried in order when its own publisher fails.
+            mirrors: z.array(publisherUrlSchema).max(19).default([]),
+          })
+          .refine(
+            (l) => l.mirrors.length === 0 || pathIdPattern.test(l.id),
+            "Mirrored location IDs use only letters, digits, '.', '_', '~' or '-'",
+          ),
       )
       .min(1)
       .max(20),
@@ -609,4 +620,42 @@ export async function fetchJson<T>(
 }
 export function endpoint(base: string, path: string): string {
   return `${base.replace(/\/$/, "")}${path}`;
+}
+// Where to request a location's `path` (such as "/current"), in order: its own
+// publisher's unprefixed endpoint, then each mirror's /v1/locations/{id} endpoint.
+export function locationEndpoints(
+  config: LocationConfig,
+  path: string,
+): string[] {
+  const own = endpoint(config.url, `/v1${path}`);
+  if (!pathIdPattern.test(config.id)) {
+    return [own];
+  }
+  return [
+    own,
+    ...config.mirrors.map((mirror) =>
+      endpoint(mirror, `/v1/locations/${config.id}${path}`),
+    ),
+  ];
+}
+// The first valid snapshot of `config`'s location from its publishers, in order.
+export async function fetchFromLocation<T extends { location: { id: string } }>(
+  config: LocationConfig,
+  path: string,
+  schema: z.ZodType<T>,
+  fetcher: (url: string, schema: z.ZodType<T>) => Promise<T> = fetchJson,
+): Promise<T> {
+  let failure: unknown = new Error("Publisher unavailable");
+  for (const url of locationEndpoints(config, path)) {
+    try {
+      const value = await fetcher(url, schema);
+      if (value.location.id !== config.id) {
+        throw new Error("Observer identity mismatch");
+      }
+      return value;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw failure;
 }

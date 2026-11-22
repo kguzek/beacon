@@ -1,9 +1,6 @@
 use anyhow::{Context, Result, bail};
-use beacon_publisher::{Snapshots, StateData, config::Config, router, spawn_refreshes};
-use std::{
-    path::Path,
-    sync::{Arc, RwLock},
-};
+use beacon_publisher::{StateData, config::Config, router, spawn_refreshes};
+use std::path::Path;
 
 mod logging;
 
@@ -19,6 +16,7 @@ async fn main() -> Result<()> {
     let (config, services) = Config::load_paths(&paths)?;
     tracing::info!(
         location = %config.location.id,
+        mirrors = config.mirrors.len(),
         services = services.len(),
         allowed_origins = config.server.allowed_origins.len(),
         current_interval_seconds = config.refresh.current_seconds,
@@ -36,13 +34,9 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&config.server.listen)
         .await
         .context("cannot bind HTTP listener")?;
-    let snapshots = Arc::new(RwLock::new(Snapshots::default()));
-    let state = StateData {
-        snapshots: snapshots.clone(),
-        cache_seconds: config.server.cache_seconds,
-    };
-    let app = router(state, &config.server.allowed_origins);
-    let tasks = spawn_refreshes(config, services, snapshots)?;
+    let state = StateData::new(&config);
+    let app = router(state.clone(), &config.server.allowed_origins);
+    let tasks = spawn_refreshes(config, services, &state)?;
     tracing::info!(address = %listener.local_addr()?, "HTTP server listening; waiting for initial snapshots");
     axum::serve(listener, app)
         .with_graceful_shutdown(async {

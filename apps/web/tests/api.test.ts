@@ -4,13 +4,16 @@ import {
   combinedStatus,
   currentSchema,
   effectiveStatus,
+  fetchFromLocation,
   filterServices,
   healthSummary,
   historySchema,
+  locationEndpoints,
   mergeSegments,
   normalizeHistory,
   probeSlots,
   serviceGroups,
+  settingsSchema,
   visibleInventory,
 } from "../src/api";
 import type { Current, Observer } from "../src/api";
@@ -47,7 +50,7 @@ function snapshot(id = "primary"): Current {
 }
 function observer(id: string, current: Current | null): Observer {
   return {
-    config: { id, name: id, url: "https://example.org" },
+    config: { id, name: id, url: "https://example.org", mirrors: [] },
     current,
     reachable: current !== null,
     loading: false,
@@ -532,5 +535,87 @@ describe("history snapshots", () => {
         (slot) => slot.kind === "missed",
       ),
     ).toBe(true);
+  });
+});
+
+describe("mirrored locations", () => {
+  const pi = settingsSchema.parse({
+    locations: [
+      {
+        id: "pi",
+        name: "Pi",
+        url: "https://beacon-pi.example.org",
+        mirrors: [
+          "https://beacon-box.example.org/",
+          "https://beacon-hp.example.org",
+        ],
+      },
+    ],
+  }).locations[0]!;
+
+  it("tries the own publisher first, then each mirror", () => {
+    expect(locationEndpoints(pi, "/history/day")).toEqual([
+      "https://beacon-pi.example.org/v1/history/day",
+      "https://beacon-box.example.org/v1/locations/pi/history/day",
+      "https://beacon-hp.example.org/v1/locations/pi/history/day",
+    ]);
+    expect(locationEndpoints({ ...pi, mirrors: [] }, "/current")).toEqual([
+      "https://beacon-pi.example.org/v1/current",
+    ]);
+  });
+
+  it("defaults mirrors and validates them", () => {
+    const parse = (location: object) =>
+      settingsSchema.safeParse({ locations: [location] });
+    const plain = parse({ id: "pi", name: "Pi", url: "https://a.org" });
+    expect(plain.success && plain.data.locations[0]!.mirrors).toEqual([]);
+    expect(
+      parse({ id: "p i", name: "Pi", url: "https://a.org", mirrors: [] })
+        .success,
+    ).toBe(true);
+    for (const location of [
+      {
+        id: "p i",
+        name: "Pi",
+        url: "https://a.org",
+        mirrors: ["https://b.org"],
+      },
+      { id: "pi", name: "Pi", url: "https://a.org", mirrors: ["ftp://b.org"] },
+      {
+        id: "pi",
+        name: "Pi",
+        url: "https://a.org",
+        mirrors: Array.from({ length: 20 }, (_, i) => `https://m${i}.org`),
+      },
+    ])
+      expect(parse(location).success).toBe(false);
+  });
+
+  it("falls back past failures and impostors to the first valid snapshot", async () => {
+    const requested: string[] = [];
+    const responses: Record<string, Current | Error> = {
+      "https://beacon-pi.example.org/v1/current": new Error("offline"),
+      "https://beacon-box.example.org/v1/locations/pi/current": snapshot("box"),
+      "https://beacon-hp.example.org/v1/locations/pi/current": snapshot("pi"),
+    };
+    const fetcher = async (url: string) => {
+      requested.push(url);
+      const response = responses[url]!;
+      if (response instanceof Error) throw response;
+      return response;
+    };
+    const value = await fetchFromLocation(
+      pi,
+      "/current",
+      currentSchema,
+      fetcher,
+    );
+    expect(value.location.id).toBe("pi");
+    expect(requested).toEqual(Object.keys(responses));
+    responses["https://beacon-hp.example.org/v1/locations/pi/current"] =
+      new Error("offline too");
+    await expect(
+      fetchFromLocation(pi, "/current", currentSchema, fetcher),
+    ).rejects.toThrow("offline too");
   });
 });

@@ -24,6 +24,15 @@
           "url": {
             "type": "string",
             "format": "uri"
+          },
+          "mirrors": {
+            "default": [],
+            "maxItems": 19,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
           }
         },
         "required": [
