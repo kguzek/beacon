@@ -43,6 +43,8 @@ This produces a service with public ID `grafana.example.org`, display name `Graf
 
 For monitoring results to match, Prometheus's `instance` label must equal the **full inventory target URL byte for byte**, within the configured `prometheus.job`. Standard Blackbox relabeling copies `__param_target` to `instance`; custom relabeling must preserve that match.
 
+When one Prometheus stores Blackbox results from several probing sites (for example, replicas that receive each other's results through remote write), the same `instance` appears once per site. Set `prometheus.matchers` to label equality matchers, such as `matchers = { vantage = "primary" }`, to select this publisher's site. They are added to every query next to `job`. Names must be valid Prometheus label names other than `job`, `instance` and reserved `__` names; values must be nonempty text. Without matchers, several series for one target fail the refresh as duplicates.
+
 A missing result makes a service unknown; it does not remove the service. Beacon does not call the Prometheus targets API or probe services directly.
 
 ## Inventory labels

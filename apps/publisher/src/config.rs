@@ -34,6 +34,10 @@ pub struct Prometheus {
     pub url: String,
     pub job: String,
     pub bearer_token: Option<String>,
+    /// Extra label equality matchers added to every query alongside `job`, for
+    /// example to select one probing site when Prometheus holds several.
+    #[serde(default)]
+    pub matchers: BTreeMap<String, String>,
     #[serde(default = "timeout")]
     pub timeout_seconds: u64,
     #[serde(default = "max_bytes")]
@@ -127,6 +131,14 @@ struct Group {
     labels: HashMap<String, String>,
 }
 
+/// A Prometheus label name: `[a-zA-Z_][a-zA-Z0-9_]*`.
+fn label_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
 pub fn text(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= 200 && !value.chars().any(char::is_control)
 }
@@ -251,6 +263,15 @@ impl Config {
             "invalid Prometheus URL; use bearer_token for credentials"
         );
         ensure!(text(&self.prometheus.job), "job required");
+        for (name, value) in &self.prometheus.matchers {
+            ensure!(
+                label_name(name)
+                    && !name.starts_with("__")
+                    && !["job", "instance"].contains(&name.as_str()),
+                "invalid Prometheus matcher label name"
+            );
+            ensure!(text(value), "invalid Prometheus matcher value");
+        }
         ensure!(
             (1..=120).contains(&self.prometheus.timeout_seconds),
             "timeout outside 1–120 seconds"

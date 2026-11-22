@@ -57,10 +57,15 @@ impl Prometheus {
         *self.services.write().unwrap() = Arc::new(services);
     }
     fn selector(&self, metric: &str) -> String {
-        format!(
-            "{metric}{{job={}}}",
-            serde_json::to_string(&self.config.prometheus.job).unwrap()
-        )
+        let prometheus = &self.config.prometheus;
+        let mut labels = format!("job={}", serde_json::to_string(&prometheus.job).unwrap());
+        for (name, value) in &prometheus.matchers {
+            labels.push_str(&format!(
+                ",{name}={}",
+                serde_json::to_string(value).unwrap()
+            ));
+        }
+        format!("{metric}{{{labels}}}")
     }
     async fn query(&self, query: &str, at: f64, kind: Kind) -> Result<Samples> {
         let range = match kind {

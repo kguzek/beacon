@@ -6,6 +6,9 @@ name = "Primary server"
 url = "http://prometheus:9090"
 job = "blackbox_http"
 # bearer_token = "private-token"
+# Added to every query next to `job`, e.g. to read one probing site from a
+# Prometheus that also stores other sites' Blackbox results.
+# matchers = { vantage = "primary" }
 timeout_seconds = 20
 max_response_bytes = 16777216
 

@@ -340,6 +340,7 @@ struct Mock {
     fail: Arc<AtomicBool>,
     mode: Arc<AtomicUsize>,
     fail_history: Arc<AtomicBool>,
+    queries: Arc<RwLock<Vec<String>>>,
 }
 async fn upstream(
     State(mock): State<Mock>,
@@ -355,6 +356,7 @@ async fn upstream(
         );
     }
     let query = &params["query"];
+    mock.queries.write().unwrap().push(query.clone());
     let now: f64 = params
         .get("time")
         .or(params.get("end"))
@@ -471,6 +473,7 @@ async fn mock() -> (Config, Mock, tokio::task::JoinHandle<()>) {
         fail: Arc::default(),
         mode: Arc::default(),
         fail_history: Arc::default(),
+        queries: Arc::default(),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut config = config();
@@ -516,6 +519,63 @@ async fn current_missing_failed_stale_and_sanitized() {
     mock.fail.store(true, Ordering::SeqCst);
     assert!(upstream.current(10000.0).await.is_err());
     task.abort();
+}
+#[test]
+fn prometheus_matchers_validation() {
+    let mut config = config();
+    config
+        .prometheus
+        .matchers
+        .insert("vantage".into(), "pi".into());
+    config.validate().unwrap();
+    for (name, value) in [
+        ("job", "other"),
+        ("instance", "https://example.org"),
+        ("__name__", "up"),
+        ("1st", "x"),
+        ("site-id", "x"),
+        ("", "x"),
+        ("vantage", ""),
+        ("vantage", "a\nb"),
+    ] {
+        let mut config = config.clone();
+        config.prometheus.matchers = [(name.to_owned(), value.to_owned())].into();
+        assert!(config.validate().is_err(), "{name}={value:?} accepted");
+    }
+}
+#[tokio::test]
+async fn prometheus_matchers_apply_to_every_query() {
+    for (matchers, expected) in [
+        (vec![], r#"{job="blackbox_http"}"#),
+        (
+            vec![("vantage", "pi"), ("env", "a\"b")],
+            r#"{job="blackbox_http",env="a\"b",vantage="pi"}"#,
+        ),
+    ] {
+        let (mut config, mock, task) = mock().await;
+        config.prometheus.matchers = matchers
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        let upstream = Prometheus::new(config, inventory(yaml()).unwrap()).unwrap();
+        let now = 3000000.0;
+        upstream.detect_scrape_interval(now).await.unwrap();
+        upstream.current(now).await.unwrap();
+        for period in ["hour", "day", "month"] {
+            upstream.history(now, period, 15).await.unwrap();
+        }
+        let queries = mock.queries.read().unwrap().clone();
+        assert!(!queries.is_empty());
+        for query in &queries {
+            assert!(query.contains(expected), "{query} lacks {expected}");
+            assert_eq!(
+                query.matches("job=").count(),
+                query.matches(expected).count(),
+                "{query} has an unfiltered selector"
+            );
+        }
+        task.abort();
+    }
 }
 #[tokio::test]
 async fn scrape_interval_detection() {
