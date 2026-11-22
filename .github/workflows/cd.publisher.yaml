@@ -28,7 +28,7 @@ concurrency:
 jobs:
   build:
     if: github.server_url == 'https://github.com'
-    runs-on: ubuntu-26.04 # ubuntu 26+ doesn't work (i forgot why)
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -96,11 +96,13 @@ jobs:
             exit 1
           fi
 
+      # Ubuntu 26.04 only ships qemu-user-static as a virtual package; qemu-user's
+      # qemu-arm runs the static executable on every release.
       - name: Smoke-test ARMv7 executable with QEMU
         if: matrix.arch == 'armv7'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes qemu-user-static
+          sudo apt-get install --yes qemu-user
           cat > "${RUNNER_TEMP}/smoke.toml" <<EOF
           [prometheus]
           url = "http://127.0.0.1:9"
@@ -109,7 +111,7 @@ jobs:
           [server]
           listen = "127.0.0.1:18080"
           EOF
-          qemu-arm-static target/armv7-unknown-linux-musleabihf/release/beacon-publisher \
+          qemu-arm target/armv7-unknown-linux-musleabihf/release/beacon-publisher \
             --config.path examples/config.toml \
             --config.path "${RUNNER_TEMP}/smoke.toml" &
           pid=$!
