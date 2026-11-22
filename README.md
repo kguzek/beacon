@@ -38,6 +38,8 @@ See the [API documentation](docs/API.md) for configuration options and response 
 
 Publisher images are available at `ghcr.io/<owner>/<repository>/publisher:latest` for Linux AMD64 and 32-bit ARMv7 (`armv7l`). Your container engine selects the matching architecture automatically. Commit-specific tags are also available; ARM64 is not currently supported.
 
+To run the publisher without containers, each `publisher-v*` release on GitHub has the same statically linked executables (`beacon-publisher-x86_64-unknown-linux-musl` and `beacon-publisher-armv7-unknown-linux-musleabihf`), with a `SHA256SUMS` file. Releases are cut by pushing a tag matching the version in `apps/publisher/Cargo.toml`.
+
 ## Publisher configuration
 
 The publisher reads `/etc/beacon/config.toml` by default. Repeat `--config.path` to layer local overrides over a base configuration:
