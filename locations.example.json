@@ -4,12 +4,18 @@
     {
       "id": "hp",
       "name": "HP",
-      "url": "https://beacon-hp.guzek.uk"
+      "url": "https://beacon-hp.guzek.uk",
+      "mirrors": [
+        "https://beacon-pi.guzek.uk"
+      ]
     },
     {
       "id": "pi",
       "name": "Pi",
-      "url": "https://beacon-pi.guzek.uk"
+      "url": "https://beacon-pi.guzek.uk",
+      "mirrors": [
+        "https://beacon-hp.guzek.uk"
+      ]
     },
     {
       "id": "box",
