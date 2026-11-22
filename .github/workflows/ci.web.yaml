@@ -118,6 +118,12 @@ jobs:
           host=localhost
           if [[ "${DOCKER_HOST:-}" =~ ^tcp://([^:/]+) ]]; then
             host="${BASH_REMATCH[1]}"
+          elif [ -f /.dockerenv ]; then
+            # The job runs in a container next to the ones it starts (Forgejo runners mount
+            # the host's Docker socket), so their published ports are on the Docker host:
+            # the job network's gateway, not this container's localhost.
+            gateway=$(awk '$2 == "00000000" { print $3; exit }' /proc/net/route)
+            host=$(printf '%d.%d.%d.%d' "0x${gateway:6:2}" "0x${gateway:4:2}" "0x${gateway:2:2}" "0x${gateway:0:2}")
           fi
           echo "DOCKER_HOSTNAME=${host}" >> "$GITHUB_ENV"
 
