@@ -58,10 +58,11 @@ app() {
   done
   local bundle="$PWD/build/Beacon.app"
   rm -rf "$bundle"
-  mkdir -p "$bundle/Contents/MacOS"
+  mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
   lipo -create "${executables[@]}" -output "$bundle/Contents/MacOS/BeaconMenu"
   rm "${executables[@]}"
   cp Info.plist "$bundle/Contents/Info.plist"
+  cp Resources/Beacon.icns "$bundle/Contents/Resources/Beacon.icns"
   # Ad-hoc signature so the app launches on Apple silicon; not notarized.
   codesign --force --sign - "$bundle"
   echo "Built $bundle"

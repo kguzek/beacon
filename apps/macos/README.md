@@ -12,6 +12,9 @@ A menu-bar companion for a Beacon status page. Its icon shows the page's overall
 
 Click the icon to see each monitoring location's own counts and the services it doesn't currently confirm as healthy.
 
+The app bundle icon (`Resources/Beacon.icns`) uses the web favicon from
+`apps/web/public/favicon.svg`, rendered at standard and Retina sizes up to 1024×1024.
+
 It polls `https://status.guzek.uk` every 60 seconds. To use another page:
 
 ```sh
