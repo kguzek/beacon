@@ -367,8 +367,7 @@ onUnmounted(() => {
               @keydown.esc="query = ''"
             />
             <span v-if="!query" class="search-placeholder" aria-hidden="true">
-              <span class="placeholder-text">{{ searchPlaceholder }}</span
-              ><span
+              <span class="placeholder-text">{{ searchPlaceholder }}</span><span
                 class="placeholder-caret"
                 :class="{ 'is-deleting': placeholderPhase === 'deleting' }"
               ></span>
@@ -510,8 +509,9 @@ onUnmounted(() => {
                             :href="`https://${service.id}`"
                             target="_blank"
                             rel="noopener noreferrer"
-                            >{{ service.id }}</a
-                          ><span v-if="service.hosting_location">
+                            >{{ service.id }}</a><span
+                            v-if="service.hosting_location"
+                          >
                             · hosted at {{ service.hosting_location }}</span
                           >
                         </span>
